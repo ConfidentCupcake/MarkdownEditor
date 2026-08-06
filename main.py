@@ -1,0 +1,1147 @@
+import resources_rc
+import os
+import sys
+import markdown
+import json
+from pathlib import Path
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
+from PyQt5.Qsci import *
+from PyQt5.QtWebEngineWidgets import QWebEngineView
+from markdowneditor import MarkdownEditor
+from pythoneditor import PythonEditor
+from file_manager import FileManager
+from fuzzy_searcher import SearchItem, SearchWorker
+from python_runner import PythonRunner
+from console_widget import ConsoleWidget
+from find_replace import FindReplaceBar
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self._dirty_tabs = set() # set of tab indices that have unsaved changes
+        self.python_runner = PythonRunner(self)
+        self.python_runner.set_interpreter(self._load_interpreter())
+        self.console = None # will be created in set_up_console_dock
+        self.python_editor_active = False
+        self.current_file = None
+        self.md = markdown.Markdown(
+            extensions=["extra", "codehilite", "toc", "sane_lists", "nl2br", "admonition", "smarty", "meta"]
+        )
+        self._preview_css = """
+           body { font-family: sans-serif; max-width: 800px; margin: 2em auto 0;
+                  padding: 0 1em 4em; background:#282c34; color:#dcdfe4; }
+           h1,h2 { border-bottom:1px solid #444; padding-bottom:.3em; }
+           code { background:#282c34; padding:2px 5px; border-radius:3px; }
+           pre { background:#282c34; padding:1em; border-radius:6px; overflow-x:auto; }
+           """
+        self.init_ui()
+
+
+    def init_ui(self):
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(100)
+        self._debounce.timeout.connect(self.render_preview)
+
+        self.setWindowTitle("Code Editor")
+        self.setWindowIcon(QIcon("icons/app-icon-256.png"))
+        self.resize(1400, 900)
+
+        self.setStyleSheet(open("css/style.qss", "r").read())
+
+        self.window_font = QFont("sans-serif")
+        self.window_font.setPointSize(13)
+        self.setFont(self.window_font)
+
+        self.set_up_menu()
+        self.set_up_body()
+        
+        # Find/Replace bar. Hidden by default
+        self.find_bar = FindReplaceBar(show_replace=False, parent=self)
+        self.find_bar.hide()
+        
+        # Connect the find bar's signals to our search methods
+        self.find_bar.find_next_requested.connect(self._do_find_next)
+        self.find_bar.find_prev_requested.connect(self._do_find_prev)
+        self.find_bar.replace_requested.connect(self._do_replace)
+        self.find_bar.replace_all_requested.connect(self._do_replace_all)
+        
+        self.set_up_console_dock()
+
+        self._preview_ready = False
+        self.preview.loadFinished.connect(self._on_preview_loaded)
+        base = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>{self._preview_css}</style></head><body><div id="content"></div></body></html>"""
+        self.preview.setHtml(base)
+        self.statusBar().setFont(self.window_font)
+        self.statusBar().setStyleSheet('''
+                color: #CCCCCC;
+        ''')
+        self.statusBar().showMessage(f"Interpreter: {self.python_runner.interpreter}")
+        self.cursor_pos_label = QLabel("Ln 1, Col 1")
+        self.cursor_pos_label.setStyleSheet("color: #888; padding: 0 10px;")
+        self.statusBar().addPermanentWidget(self.cursor_pos_label)
+        self.show()
+
+    def _on_editor_text_changed(self):
+        """Called when the current editor's text changes. Marks the tab as dirty."""
+        index = self.tab_view.currentIndex()
+        if index < 0:
+            return
+
+        # Only mark dirty if this is a real change (not loading the file)
+        editor = self.tab_view.currentWidget()
+        if editor is not None and getattr(editor, "_loading_text", False):
+            return
+
+        # _loading_text is set to True during setTextSafely()
+        # so we don't mark the tab dirty when loading a file
+
+        self._dirty_tabs.add(index)
+
+        # Add the dot indicator if not already there
+        title = self.tab_view.tabText(index)
+        if not title.startswith("● "):
+            self.tab_view.setTabText(index, f"● {title}")
+
+    def update_cursor_position(self, line: int, index: int):
+        """
+        Update the Ln/Col display in the status bar.
+        
+        QScintilla uses 0-based line and column numbers.
+        Users expect 1-based, so we add 1 to both.
+        """
+        self.cursor_pos_label.setText(f"Ln {line + 1}, Col {index + 1}")
+    
+    def set_up_console_dock(self):
+        """Create the bottom console panel."""
+        self.console = ConsoleWidget(self.python_runner, self)
+        self.console.run_btn.clicked.connect(self.run_current_file)
+        
+        dock = QDockWidget("Python Console", self)
+        dock.setWidget(self.console)
+        dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
+        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        
+        dock.hide()
+        self.console_dock = dock
+    
+    def get_sidebar_label(self, path, name):
+        label = QLabel(self)
+        label.setPixmap(QPixmap(path).scaled(QSize(25,25)))
+        label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        label.setFont(self.window_font)
+        label.mousePressEvent = lambda e: self.show_hide_tab(e, name)
+        return label
+
+    def get_editor(self, path: Path = None, is_python_file=True) -> QsciScintilla:
+        if self.python_editor_active:
+            self.editor = PythonEditor(path=path, is_python_file=is_python_file)
+        else:
+            self.editor = MarkdownEditor(path=path, is_python_file=is_python_file)
+        return self.editor
+
+    def set_up_menu(self):
+        menu_bar = self.menuBar()
+
+        # File menu
+        file_menu = menu_bar.addMenu("File")
+
+        new_file = file_menu.addAction("New")
+        new_file.setShortcut("Ctrl+N")
+        new_file.setShortcutContext(Qt.ApplicationShortcut)
+        new_file.triggered.connect(self.new_file)
+
+        open_file = file_menu.addAction("Open File")
+        open_file.setShortcut("Ctrl+O")
+        open_file.setShortcutContext(Qt.ApplicationShortcut)
+        open_file.triggered.connect(self.open_file)
+
+        open_folder = file_menu.addAction("Open Folder")
+        open_folder.setShortcut("Ctrl+K")
+        open_folder.setShortcutContext(Qt.ApplicationShortcut)
+        open_folder.triggered.connect(self.open_folder)
+
+        file_menu.addSeparator()
+        save_file = file_menu.addAction("Save")
+        save_file.setShortcut("Ctrl+S")
+        save_file.setShortcutContext(Qt.ApplicationShortcut)
+        save_file.triggered.connect(self.save_file)
+
+        save_as = file_menu.addAction("Save As")
+        save_as.setShortcut("Ctrl+Shift+S")
+        save_as.setShortcutContext(Qt.ApplicationShortcut)
+        save_as.triggered.connect(self.save_as)
+
+        # Edit menu
+        edit_menu = menu_bar.addMenu("Edit")
+        
+        undo_action = edit_menu.addAction("Undo")
+        undo_action.setShortcut("Ctrl+Z")
+        undo_action.setShortcutContext(Qt.ApplicationShortcut)
+        undo_action.triggered.connect(self.undo)
+        
+        redo_action = edit_menu.addAction("Redo")
+        redo_action.setShortcut("Ctrl+Shift+Z")
+        redo_action.setShortcutContext(Qt.ApplicationShortcut)
+        redo_action.triggered.connect(self.redo)
+        
+        edit_menu.addSeparator()
+        
+        cut_action = edit_menu.addAction("Cut")
+        cut_action.setShortcut("Ctrl+X")
+        cut_action.setShortcutContext(Qt.ApplicationShortcut)
+        cut_action.triggered.connect(self.cut)
+        
+        copy_action = edit_menu.addAction("Copy")
+        copy_action.setShortcut("Ctrl+C")
+        copy_action.setShortcutContext(Qt.ApplicationShortcut)
+        copy_action.triggered.connect(self.copy)
+        
+        paste_action = edit_menu.addAction("Paste")
+        paste_action.setShortcut("Ctrl+V")
+        paste_action.setShortcutContext(Qt.ApplicationShortcut)
+        paste_action.triggered.connect(self.paste)
+        
+        edit_menu.addSeparator()
+        
+        select_all_action = edit_menu.addAction("Select All")
+        select_all_action.setShortcut("Ctrl+A")
+        select_all_action.setShortcutContext(Qt.ApplicationShortcut)
+        select_all_action.triggered.connect(self.select_all)
+        
+        delete_line_action = edit_menu.addAction("Delete Line")
+        delete_line_action.setShortcut("Ctrl+Shift+K")
+        delete_line_action.setShortcutContext(Qt.ApplicationShortcut)
+        delete_line_action.triggered.connect(self.delete_line)
+        
+        edit_menu.addSeparator()
+        
+        find_action = edit_menu.addAction("Find")
+        find_action.setShortcut("Ctrl+F")
+        find_action.setShortcutContext(Qt.ApplicationShortcut)
+        find_action.triggered.connect(self.show_find_bar)
+        
+        replace_action = edit_menu.addAction("Replace")
+        replace_action.setShortcut("Ctrl+H")
+        replace_action.setShortcutContext(Qt.ApplicationShortcut)
+        replace_action.triggered.connect(self.show_replace_bar)
+
+        # Mode menu
+        mode_menu = menu_bar.addMenu("Mode")
+
+        # change to Python-Editor
+        self.python_editor_action = mode_menu.addAction("Python Editor")
+        self.python_editor_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        self.python_editor_action.setShortcutContext(Qt.ApplicationShortcut)
+        self.python_editor_action.triggered.connect(self.change_editor_python)
+        
+        # change to Markdown-Editor
+        self.markdown_editor_action = mode_menu.addAction("Markdown Editor")
+        self.markdown_editor_action.setShortcut(QKeySequence("Ctrl+Shift+M"))
+        self.markdown_editor_action.setShortcutContext(Qt.ApplicationShortcut)
+        self.markdown_editor_action.triggered.connect(self.change_editor_markdown)
+        
+        run_menu = self.menuBar().addMenu("Run")
+        
+        run_file_action = run_menu.addAction("Run File")
+        run_file_action.setShortcut("F5")
+        run_file_action.setShortcutContext(Qt.ApplicationShortcut)
+        run_file_action.triggered.connect(self.run_current_file)
+        
+        run_selection_action = run_menu.addAction("Run Selection")
+        run_selection_action. setShortcut("Ctrl+Return")
+        run_selection_action.setShortcutContext(Qt.ApplicationShortcut)
+        run_selection_action.triggered.connect(self.run_selection)
+        
+        stop_action = run_menu.addAction("Stop")
+        stop_action.setShortcut("F6")
+        stop_action.setShortcutContext(Qt.ApplicationShortcut)
+        stop_action.triggered.connect(self.python_runner.stop)
+        
+        run_menu.addSeparator()
+
+        interpreter_action = run_menu.addAction("Choose Interpreter...")
+        interpreter_action.triggered.connect(self.choose_interpreter)
+
+        # Viewmenu for toggling the Sidebar
+        view_menu = menu_bar.addMenu("View")
+
+        toggle_sidebar_action = view_menu.addAction("Toggle Sidebar")
+        toggle_sidebar_action.setShortcut("Ctrl+B")
+        toggle_sidebar_action.setShortcutContext(Qt.ApplicationShortcut)
+        toggle_sidebar_action.triggered.connect(self.toggle_sidebar)
+
+        toggle_preview_action = view_menu.addAction("Toggle Preview")
+        toggle_preview_action.setShortcut("Ctrl+J")
+        toggle_preview_action.setShortcutContext(Qt.ApplicationShortcut)
+        toggle_preview_action.triggered.connect(self.toggle_preview)
+
+        toggle_console_action = view_menu.addAction("Toggle Console")
+        toggle_console_action.setShortcut("Ctrl+`")
+        toggle_console_action.setShortcutContext(Qt.ApplicationShortcut)
+        toggle_console_action.triggered.connect(self.toggle_console)
+
+    def toggle_sidebar(self):
+        """Hide/show the sidebar (side_bar + side_panel)."""
+        # self.side_bar is the thin icon strip
+        # self.side_panel is the wider panel with file manager / search
+        currently_visible = self.side_bar.isVisible()
+        self.side_bar.setVisible(not currently_visible)
+        self.side_panel.setVisible(not currently_visible)
+
+        # If showing, restore the splitter sizes so the panel has width
+        if not currently_visible:
+            # Give the sidebar 250px, let the editor and preview share the rest
+            self.hs_split.setSizes([250,575,575])
+        else:
+            # Collapsing: set sidebar with to 0
+            self.hs_split.setSizes([0,575,575])
+
+    def toggle_preview(self):
+        """Hide/Show the Markdown preview panel."""
+        currently_visible = self.preview.isVisible()
+        self.preview.setVisible(not currently_visible)
+
+        if currently_visible:
+            # Hiding preview: give all space to sidebar + editor
+            self.hs_split.setSizes([250, 850, 0])
+        else:
+            # Showing preview: restore even split
+            self.hs_split.setSizes([250, 575, 575])
+
+    def toggle_console(self):
+        """Hide/show the Python console dock."""
+        if self.console_dock.isVisible():
+            self.console_dock.hide()
+        else:
+            self.console_dock.show()
+
+    def run_current_file(self):
+        """Save and run the current Python file"""
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+
+        path = getattr(editor, "path", None)
+        if path is None:
+            # Untitled file -> need to save first
+            self.save_as()
+            path = getattr(editor, "path", None)
+            if path is None:
+                return # User cancelled the sace dialog
+
+        else:
+            self.save_file()
+
+        # Show the console
+        self.console_dock.show()
+
+        # Run the file
+        self.python_runner.run_file(Path(path), cwd=Path(path).parent)
+
+    def run_selection(self):
+        """Run just the selected text in the current editor."""
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+
+        # Get selected text from QsciScintilla
+        selected_text = editor.selectedText()
+        if not selected_text:
+            return
+
+        self.console_dock.show()
+        self.python_runner.run_code(selected_text)
+
+
+    def choose_interpreter(self):
+        """Let the user pick a Python executable."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose Python Interpreter", "",
+            "Python Executable (python.exe);;All Files (*)"
+        )
+        if path:
+            self.python_runner.set_interpreter(path)
+            self.statusBar().showMessage(f"Python Interpreter: {path}", 3000)
+            self._save_interpreter(path)
+
+    def _save_interpreter(self, path: str):
+        """Save the chosen interpreter to settings.json."""
+        import json
+        settings_path = Path(__file__).parent / "settings.json"
+        settings = {}
+        if settings_path.exists():
+            settings = json.loads(settings_path.read_text())
+        settings["interpreter"] = path
+        settings_path.write_text(json.dumps(settings, indent=2))
+
+    def _load_interpreter(self) -> str:
+        """Load the saved interpreter, or default to sys.executable."""
+        import json, sys
+        settings_path = Path(__file__).parent / "settings.json"
+        if settings_path.exists():
+            settings = json.loads(settings_path.read_text())
+            return settings.get("interpreter", sys.executable)
+        return sys.executable
+
+    def is_binary(self, path):
+        '''
+        check if a file is binary
+        :param path:
+        :return:
+        '''
+        with open(path, 'rb') as f:
+            return b'\0' in f.read(1024)
+
+    def set_new_tab(self, path: Path, is_new_file=False):
+        if not is_new_file:
+            if not path.is_file():
+                return
+            if self.is_binary(path):
+                self.statusBar().showMessage("Cannot Open Binary File", 2000)
+                return
+            for i in range(self.tab_view.count()):
+                editor = self.tab_view.widget(i)
+                if getattr(editor, "path", None) == path:
+                    self.tab_view.setCurrentIndex(i)
+                    return
+
+        if self.python_editor_active:
+            self.editor = self.get_editor(path, path.suffix in {".md", ".pyw", ".py"})
+            self.editor.textChanged.connect(self._debounce.start)
+            self.editor.verticalScrollBar().valueChanged.connect(
+                lambda: self.sync_scroll(self.editor))
+            self.editor.cursorPositionChanged.connect(
+                lambda l, i: self.sync_scroll(self.editor))
+        else:
+            self.editor = self.get_editor(path, path.suffix in {".md", ".pyw", ".py"})
+            self.editor.textChanged.connect(self._debounce.start)
+            self.editor.verticalScrollBar().valueChanged.connect(
+                lambda: self.sync_scroll(self.editor))
+            self.editor.cursorPositionChanged.connect(
+                lambda l, i: self.sync_scroll(self.editor))
+        
+        self.editor.cursorPositionChanged.connect(self.update_cursor_position)
+        self.editor.textChanged.connect(self._on_editor_text_changed)
+        
+        if is_new_file:
+            self.tab_view.addTab(self.editor, "untitled")
+            self.setWindowTitle("Untitled")
+            self.statusBar().showMessage("Opened untitled", 2000)
+            self.current_file = None
+        else:
+            text = path.read_text(encoding="utf-8")
+            if hasattr(self.editor, "setTextSafely"):
+                self.editor.setTextSafely(text)
+            else:
+                self.editor.blockSignals(True)
+                self.editor.setText(text)
+                self.editor.blockSignals(False)
+            self.tab_view.addTab(self.editor, path.name)
+            self.current_file = path
+
+
+    def get_frame(self) -> QFrame:
+        frame = QFrame()
+        frame.setFrameShape(QFrame.NoFrame)
+        frame.setFrameShadow(QFrame.Plain)
+        frame.setContentsMargins(0,0,0,0)
+        frame.setStyleSheet('''
+            QFrame {
+                background-color: #282c34;
+                border-radius: 0px;
+                border: none;
+                padding: 5px;
+                color: #D3D3D3;
+            }
+            QFrame::hover {
+                color: white;
+            }
+        ''')
+        return frame
+
+
+    def set_up_body(self):
+        # Body
+        body_frame = QFrame()
+        body_frame.setFrameShape(QFrame.Shape.NoFrame)
+        body_frame.setLineWidth(0)
+        body_frame.setMidLineWidth(0)
+        body_frame.setContentsMargins(0, 0, 0, 0)
+        body_frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body_frame.setLayout(body)
+
+        self.tab_view = QTabWidget()
+        self.tab_view.setContentsMargins(0, 0, 0, 0)
+        self.tab_view.setTabsClosable(True)
+        self.tab_view.setMovable(True)
+        self.tab_view.setDocumentMode(True)
+        self.tab_view.tabCloseRequested.connect(self.close_tab)
+        self.tab_view.currentChanged.connect(self.on_tab_changed)
+        self.tab_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tab_view.customContextMenuRequested.connect(self._show_tab_context_menu)
+        
+        #editor_container = QWidget()
+        #editor_layout = QStackedWidget(editor_container)
+
+        self.preview =QWebEngineView()
+
+        self.side_bar = QFrame()
+        self.side_bar.setFrameShape(QFrame.Shape.StyledPanel)
+        self.side_bar.setFrameShadow(QFrame.Shadow.Plain)
+        self.side_bar.setStyleSheet(f'''
+            background-color: {"#282c34"};
+        ''')
+
+        side_bar_layout = QVBoxLayout()
+        side_bar_layout.setContentsMargins(5, 15, 5, 0)
+        side_bar_layout.setSpacing(0)
+        side_bar_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignCenter)
+
+        # setup labels
+        self.sidebar_labels = {}
+
+        folder_label = self.get_sidebar_label("icons/folder.png", "folder")
+        self.sidebar_labels["folder"] = folder_label
+        side_bar_layout.addWidget(folder_label)
+
+        search_label = self.get_sidebar_label("icons/search.png", "search")
+        self.sidebar_labels["search"] = search_label
+        side_bar_layout.addWidget(search_label)
+        self.side_bar.setLayout(side_bar_layout)
+
+        # split view
+        self.hs_split = QSplitter(Qt.Orientation.Horizontal)
+
+        # frame and layout to hold the tree view (file Manager)
+        self.file_manager_frame = self.get_frame()
+
+        self.file_manager_layout = QVBoxLayout()
+        self.file_manager_layout.setContentsMargins(0, 0, 0, 0)
+        self.file_manager_layout.setSpacing(0)
+        self.file_manager = FileManager(
+            tab_view=self.tab_view,
+            get_editor=self.get_editor,
+            _swap_editor=self._swap_editor,
+            set_new_tab=self.set_new_tab,
+            main_window=self,
+        )
+
+        # setup layout
+        self.file_manager_layout.addWidget(self.file_manager)
+        self.file_manager_frame.setLayout(self.file_manager_layout)
+
+        # search manager
+        self.search_frame = self.get_frame()
+
+        search_layout = QVBoxLayout()
+        search_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        search_layout.setContentsMargins(0, 10, 0, 0)
+        search_layout.setSpacing(0)
+
+        search_input = QLineEdit()
+        search_input.setPlaceholderText("Search")
+        search_input.setFont(self.window_font)
+        search_input.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self.search_checkbox = QCheckBox("Search in Modules")
+        self.search_checkbox.setFont(self.window_font)
+        self.search_checkbox.setStyleSheet("color: white; margin-bottom: 10px;")
+
+        self.search_worker = SearchWorker()
+        self.search_worker.finished.connect(self.search_finished)
+
+        search_input.textChanged.connect(
+            lambda text: self.search_worker.update(
+                text,
+                self.file_manager.model.rootDirectory().absolutePath(),
+                self.search_checkbox.isChecked(),
+            )
+        )
+
+        self.search_list_view = QListWidget()
+        self.search_list_view.setFont(QFont("sans-serif", 13))
+        self.search_list_view.setStyleSheet("""
+        QListWidget {
+            background-color: #21252b;
+            border-radius: 5px;
+            border: 1px solid #D3D3D3;
+            padding: 5px;
+            color: #D3D3D3;
+        }
+        """)
+
+        self.search_list_view.itemClicked.connect(self.search_list_view_clicked)
+
+        search_layout.addWidget(self.search_checkbox)
+        search_layout.addWidget(search_input)
+        search_layout.addSpacerItem(QSpacerItem(5, 5, QSizePolicy.Minimum, QSizePolicy.Minimum))
+
+        search_layout.addWidget(self.search_list_view)
+        self.search_frame.setLayout(search_layout)
+
+        # --- Side panel: QStackedWidget so only one panel is visible at a time ---
+        self.side_panel = QStackedWidget()
+        self.side_panel.setMinimumWidth(280)  # was 200 — too narrow
+        self.side_panel.setMaximumWidth(450)  # was 400 — give more room
+        self.side_panel.addWidget(self.file_manager_frame)
+        self.side_panel.addWidget(self.search_frame)
+
+        body.addWidget(self.side_bar)
+        self.hs_split.addWidget(self.side_panel)
+        self.hs_split.addWidget(self.tab_view)
+        self.hs_split.addWidget(self.preview)
+        self.hs_split.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.hs_split.setSizes([300, 550, 550])
+        body.addWidget(self.hs_split)
+        body_frame.setLayout(body)
+
+        self.setCentralWidget(body_frame)
+
+    def _show_tab_context_menu(self, pos: QPoint):
+        """
+        Show a context menu when the user right-clicks a tab.
+
+        `pos` is relative to the QTabWidget.
+        We need to fing which tab was clicked using the tab bar.
+        :return:
+        """
+        # The QTabWidget has an internal QTabBar that holds the actual tab buttons.
+        # We need to ask it which tab is at the click position.
+        # But first, convert the pos from QTabWidget coordinates to QTabBar coordinates.
+        # mapTo converts a point from one widget's coordinate system to another's.
+        # Docs: https://doc.qt.io/qt-5/qwidget.html#mapTo
+
+        tab_bar = self.tab_view.tabBar()
+        # Convert the click position from QTabWidget coords to QTabBar coords
+        bar_pos = tab_bar.mapFrom(self.tab_view, pos)
+        index = tab_bar.tabAt(bar_pos)
+
+        if index < 0:
+            # User clicked somewhere that's not a tab (e.g. the empty space after tabs)
+            return
+
+        # Create the context menu
+        # QMenu is a popup menu. You add actions to it and call exec_ to show it.
+        # Docs: https://doc.qt.io/qt-5/qmenu.html
+        menu = QMenu(self)
+
+        close_action = menu.addAction("Close")
+        close_others_action = menu.addAction("Close Others")
+        close_all_action = menu.addAction("Close All")
+        menu.addSeparator()
+        copy_path_action = menu.addAction("Copy Path")
+        reveal_action = menu.addAction("Reveal in File Manager")
+
+        # exec_ shows the menu at the global screen position and blocks
+        # until the user selects an item or clicks away.
+        # mapToGlobal converts a local position to screen coordinates.
+        # Docs: https://doc.qt.io/qt-5/qmenu.html#exec
+        action = menu.exec_(self.tab_view.mapToGlobal(pos))
+
+        if action == close_action:
+            self.close_tab(index)
+        elif action == close_others_action:
+            self._close_other_tabs(index)
+        elif action == close_all_action:
+            self._close_all_tabs()
+        elif action == copy_path_action:
+            self._copy_tab_path(index)
+        elif action == reveal_action:
+            self._reveal_tab_in_file_manager(index)
+
+    def _close_other_tabs(self, keep_index: int):
+        """Close all tabs except the one at keep_index."""
+        # Close tabs from right to left so indices don't shift
+        # If you close from left to right, removing tab 0 makes tab 1 become tab 0,
+        # and your keep_index would point at the wrong tab.
+        for i in range(self.tab_view.count() - 1, -1, -1):
+            if i != keep_index:
+                self.close_tab(i)
+
+    def _close_all_tabs(self):
+        """Close every open tab."""
+        for i in range(self.tab_view.count() - 1, -1, -1):
+            self.close_tab(i)
+
+    def _copy_tab_path(self, index: int):
+        """Copy the file path of the tab at `index` to the clipboard."""
+        editor = self.tab_view.widget(index)
+        path = getattr(editor, "path", None)
+        if path is not None:
+            # QApplication.clipboard() gives access to the system clipboard
+            # setText() puts text on it
+            # Docs: https://doc.qt.io/qt-5/qclipboard.html#setText
+            QApplication.clipboard().setText(str(path))
+            self.statusBar().showMessage(f"Copied: {path}", 2000)
+
+    def _reveal_tab_in_file_manager(self, index: int):
+        """Open the OS file manager at the file's location."""
+        editor = self.tab_view.widget(index)
+        path = getattr(editor, "path", None)
+        if path is None:
+            return
+
+        # Reuse the logic from FileManager.action_open_in_file_manager
+        # but with the tab's path instead of a tree view index
+        import subprocess, sys
+        if sys.platform == "win32":
+            subprocess.Popen(f'explorer /select,"{path}"')
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path.parent)])
+
+    def _position_find_bar(self):
+        """Position the find bar at the top-right of the tab view area."""
+        tab_rect = self.tab_view.geometry()
+        # geometry() returns a QRect with x, y, width, height
+        # Docs: https://doc.qt.io/qt-5/qwidget.html#geometry
+        
+        bar_width = 450
+        x = tab_rect.right() - bar_width - 20
+        y = tab_rect.top() + 35
+        
+        self.find_bar.move(x, y)
+        self.find_bar.resize(bar_width, self.find_bar.sizeHint().height())
+        self.find_bar.raise_() # bring to front
+        # raise_() puts widget on top of siblings
+        
+    
+    def set_cursor_pointer(self, e):
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_cursor_arrow(self, e):
+        self.setCursor(Qt.ArrowCursor)
+
+    def search_finished(self, items):
+        self.search_list_view.clear()
+        for i in items:
+            self.search_list_view.addItem(i)
+
+    def search_list_view_clicked(self, item: SearchItem):
+        self.set_new_tab(Path(item.full_path))
+        editor = self.tab_view.currentWidget()
+        editor.setCursorPosition(item.lineno, item.end)
+        editor.setFocus()
+
+    def close_tab(self, index):
+        # Check for unsaved changes
+        if index in self._dirty_tabs:
+            # QMessageBox.question shows a Yes/No dialog
+            # Docs: https://doc.qt.io/qt-5/qmessagebox.html#question
+            title = self.tab_view.tabText(index)
+            if title.startswith("● "):
+                title = title[2:]
+            reply = QMessageBox.question(
+                self, title,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No  # default button
+            )
+            if reply == QMessageBox.No:
+                return
+
+        widget = self.tab_view.widget(index)
+        if isinstance(widget, PythonEditor):
+            widget.shutdown()
+
+        self._dirty_tabs.discard(index)
+        # Reindex remaining dirty tabs (indices shift after removal)
+        self._dirty_tabs = {i if i < index else i - 1 for i in self._dirty_tabs}
+
+        self.tab_view.removeTab(index)
+        self.render_preview()
+
+    def show_hide_tab(self, e, type_):
+        panels = {
+            "folder": self.file_manager_frame,
+            "search": self.search_frame,
+        }
+        # Update icoon states. Reset all to gray, then set active to blue
+        icon_map = {
+            "folder": ("icons/folder.png", "icons/folder-active.png"),
+            "search": ("icons/search.png", "icons/search-active.png"),
+        }
+        # Reset all sidebar icons to inactive gray
+        for name, (inactive, active) in icon_map.items():
+            label = self.sidebar_labels.get(name)
+            if label:
+                label.setPixmap(QPixmap(inactive).scaled(QSize(25,25)))
+
+        target = panels.get(type_)
+        if target is None:
+            return
+
+        # If the target panel is already showing, hide the side panel
+        if self.side_panel.isVisible() and self.side_panel.currentWidget() is target:
+            # Clicking the active panel hiddes is, resets to gray
+            self.side_panel.hide()
+            return
+
+        # Otherwise, switch to the target panel and show it
+        self.side_panel.setCurrentWidget(target)
+        self.side_panel.show()
+
+        label = self.sidebar_labels.get(type_)
+        if label:
+            label.setPixmap(QPixmap(icon_map[type_][1]).scaled(QSize(25,25)))
+        # Restore splitter sizes if the side panel was hidden (width 0)
+        sizes = self.hs_split.sizes()
+        if sizes and sizes[0] == 0:
+            self.hs_split.setSizes([300, 550, 550])
+
+
+    def tree_view_context_menu(self, pos):
+        ...
+
+
+    def new_file(self):
+        editor = self.get_editor()
+        editor.textChanged.connect(self._on_editor_text_changed)
+        editor.cursorPositionChanged.connect(self.update_cursor_position)
+        editor.cursorPositionChanged.connect(lambda l, i: self.sync_scroll(editor))
+        editor.textChanged.connect(self._debounce.start)
+        editor.verticalScrollBar().valueChanged.connect(
+            lambda: self.sync_scroll(editor)
+        )
+        self.tab_view.addTab(editor, "Untitled")
+
+    def open_file(self):
+        # open file
+        ops = QFileDialog.Options()
+        ops |= QFileDialog.DontUseNativeDialog
+        new_file, _ = QFileDialog.getOpenFileName(
+            self,
+    "Pick A File", "", "All Files (*);;Text Files (*.txt);;Python Files (*.py);;Markdown Files (*.md)",
+            options=ops
+        )
+
+        if new_file == '':
+            self.statusBar().showMessage("Cancelled", 2000)
+            return
+        f = Path(new_file)
+        self.set_new_tab(f)
+
+    def open_folder(self):
+        # open folder
+        ops = QFileDialog.Options()
+        ops |= QFileDialog.DontUseNativeDialog
+
+        new_folder = QFileDialog.getExistingDirectory(self, "Pick A Folder", "", options=ops)
+
+        if not new_folder:
+            return
+
+        self.file_manager.model.setRootPath(new_folder)
+        self.file_manager.setRootIndex(self.file_manager.model.index(new_folder))
+        self.statusBar().showMessage(f"Opened {new_folder}", 2000)
+
+    def save_file(self):
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+
+        path = getattr(editor, "path", None)
+        if path is None:
+            self.save_as()
+            return
+
+        path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
+        self.current_file = path
+        # Remove dirty indicator
+        index = self.tab_view.currentIndex()
+        self._dirty_tabs.discard(index)
+        title = self.tab_view.tabText(index)
+        if title.startswith("● "):
+            self.tab_view.setTabText(index, title[2:])  # remove "● " prefix
+        self.statusBar().showMessage(f"Saved {path.name}", 2000)
+
+    def save_as(self):
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+
+        file_path = QFileDialog.getSaveFileName(self, "Save As", os.getcwd())[0]
+        if file_path == '':
+            self.statusBar().showMessage("Cancelled", 2000)
+            return
+        path = Path(file_path)
+        path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
+        editor.path = path
+        editor.full_path = path.absolute()
+        self.tab_view.setTabText(self.tab_view.currentIndex(), path.name)
+        # Remove dirty indicator
+        index = self.tab_view.currentIndex()
+        self._dirty_tabs.discard(index)
+        # save_as already calls setTabText with the new name, so no prefix to remove
+        self.statusBar().showMessage(f"Saved {path.name}", 2000)
+        self.current_file = path
+
+    def copy(self):
+        editor = self.tab_view.currentWidget()
+        if editor is not None:
+            editor.copy()
+            
+    def undo(self):
+        editor = self.tab_view.currentWidget()
+        if editor is not None:
+            editor.undo()
+    
+    def redo(self):
+        editor = self.tab_view.currentWidget()
+        if editor is not None:
+            editor.redo()
+    
+    def cut(self):
+        editor = self.tab_view.currentWidget()
+        if editor is not None:
+            editor.cut()
+            
+    def paste(self):
+        editor = self.tab_view.currentWidget()
+        if editor is not None:
+            editor.paste()
+            
+    def select_all(self):
+        editor = self.tab_view.currentWidget()
+        if editor is not None:
+            editor.selectAll()
+    
+    def delete_line(self):
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+        # Get the current cursor position
+        # Returns (line, index) both 0-based
+        line, _ = editor.getCursorPosition()
+        total_lines = editor.lines()
+        # we need to handle two cases.
+        # 1. Not the last line: select from start of current line to start of next line
+        
+        #   This includes the newline character, so th eline is fully removed
+        # 2. Last line: select the entire line content (no newline after it to remove)
+        if line < total_lines -1:
+            editor.setSelection(line, 0, line + 1, 0)
+        else:
+            line_len = editor.lineLength(line)
+            editor.setSelection(line, 0, line, line_len)
+        editor.removeSelectedText()
+
+    def on_tab_changed(self, index):
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+        want = PythonEditor if self.python_editor_active else MarkdownEditor
+        if not isinstance(editor, want):
+            editor = self._convert_current_tab(want)
+            if editor is None:
+                return
+        self.current_file = getattr(editor, "path", None)
+        if isinstance(editor, MarkdownEditor):
+            self.render_preview()
+        editor = self.tab_view.currentWidget()
+        if editor is not None:
+            line, index = editor.getCursorPosition()
+            self.update_cursor_position(line, index)
+
+
+    def change_editor_python(self):
+        self.python_editor_active = True
+        self._swap_editor(PythonEditor)
+        self.preview.hide()
+        self.statusBar().showMessage("Python-Editor applied", 2000)
+
+    def change_editor_markdown(self):
+        self.python_editor_active = False
+        self._swap_editor(MarkdownEditor)
+        self.preview.show()
+        QTimer.singleShot(0, self.render_preview)
+        self.statusBar().showMessage("Markdown-Editor applied", 2000)
+
+    def render_preview(self):
+        editor = self.tab_view.currentWidget()
+        if not isinstance(editor, MarkdownEditor) or not self._preview_ready:
+            return
+        self.md.reset()
+        body = self.md.convert(editor.text())
+        payload = json.dumps(body)
+        js = f'document.getElementById("content").innerHTML = {payload};'
+        self.preview.page().runJavaScript(js)
+
+    def _on_preview_loaded(self, ok):
+        self._preview_ready = True
+        self.render_preview()
+
+    def sync_scroll(self, editor):
+        if not self._preview_ready or editor is not self.tab_view.currentWidget():
+            return
+        total = editor.lines()
+        visible = editor.SendScintilla(editor.SCI_LINESONSCREEN)
+        first = editor.firstVisibleLine()
+        denom = max(total - visible, 1)
+        ratio = min(max(first / denom, 0.0), 1.0)
+        js = f"""
+        var h = document.documentElement.scrollHeight - window.innerHeight;
+        window.scrollTo(0, h * {ratio});
+        """
+        self.preview.page().runJavaScript(js)
+
+    def _convert_current_tab(self, EditorClass):
+        old = self.tab_view.currentWidget()
+        if old is None:
+            return None
+        if isinstance(old, EditorClass):
+            return old
+
+        text = old.text()
+        index = self.tab_view.currentIndex()
+        title = self.tab_view.tabText(index)
+        path = getattr(old, "path", None)
+
+        if isinstance(old, PythonEditor) and hasattr(old, "shutdown"):
+            old.shutdown()
+
+        new_editor = EditorClass(path=path)
+        new_editor.textChanged.connect(self._on_editor_text_changed)
+        new_editor.cursorPositionChanged.connect(self.update_cursor_position)
+        if hasattr(new_editor, "setTextSafely"):
+            new_editor.setTextSafely(text)
+        else:
+            new_editor.blockSignals(True)
+            new_editor.setText(text)
+            new_editor.blockSignals(False)
+
+        new_editor.textChanged.connect(self._debounce.start)
+        new_editor.verticalScrollBar().valueChanged.connect(lambda: self.sync_scroll(new_editor))
+        new_editor.cursorPositionChanged.connect(lambda l, i: self.sync_scroll(new_editor))
+
+        self.tab_view.blockSignals(True)
+        self.tab_view.removeTab(index)
+        self.tab_view.insertTab(index, new_editor, title)
+        self.tab_view.setCurrentIndex(index)
+        self.tab_view.blockSignals(False)
+
+        self.current_file = path
+
+        old.deleteLater()
+        return new_editor
+
+    def _swap_editor(self, EditorClass):
+        return self._convert_current_tab(EditorClass)
+        
+    def show_find_bar(self):
+        """Show the find bar (Ctrl+F mode)."""
+        # Pre-fill with selected text if any
+        editor = self.tab_view.currentWidget()
+        selected = editor.selectedText() if editor else ""
+        self.find_bar.set_search_text(selected)
+        self.find_bar.show_find()
+        self._position_find_bar()
+
+        
+    def show_replace_bar(self):
+        """Show the find+replace bar (Ctrl+H mode)."""
+        editor = self.tab_view.currentWidget()
+        selected = editor.selectedText() if editor else ""
+        self.find_bar.set_search_text(selected)
+        self.find_bar.show_replace()
+        self._position_find_bar()
+
+        
+    def _do_find_next(self, text, case_sensitive, whole_word, regex):
+        """Search forward from the current cursor position."""
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+        line, index = editor.getCursorPosition()
+        # getCursorPosition returns (line, index) as a tuple
+        # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a2d0e8b6e0a3e3a9c0e3a3e3a3e3a3e3a
+
+        editor.findFirst(
+            text,           # the search string or regex
+            regex,          # is it a regex?
+            case_sensitive, # case-sensitive?
+            whole_word,     # whole-word match only?
+            True,           # wrap around to top when reaching bottom?
+            True,           # search forward?
+            line,           # start line
+            index,          # start column
+            True,           # show the match (scroll to it)?
+            False           # POSIX regex mode (False = use Python regex)
+        )
+        
+    def _do_find_prev(self, text, case_sensitive, whole_word, regex):
+        """Search backward from the current cursor position."""
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+
+        line, index = editor.getCursorPosition()
+
+        editor.findFirst(
+            text,
+            regex,
+            case_sensitive,
+            whole_word,
+            True,    # wrap around
+            False,   # search BACKWARD
+            line,
+            index,
+            True,    # show the match
+            False
+        )
+        
+    def _do_replace(self, find_text, replace_text, case_sensitive, whole_word, regex):
+        """Replace the currently selected match, then find the next one."""
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return 
+        # If there's a selection and it matches the search text, replace it
+        if editor.hasSelectedText():
+            editor.replace(replace_text)
+            # replace() swaps the currently selected Tect with replace_text 
+            # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a
+        # Find the next match
+        self._do_find_next(find_text, case_sensitive, whole_word, regex)
+        
+    def _do_replace_all(self, find_text, replace_text, case_sensitive, whole_word, regex):
+        """Replace all occurrences in the current document."""
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+        
+        # Move cursor to the start of the Document
+        # sendScintilla sends a raw Scintilla message
+        # SCI_DOCUMENTSTART = 2318 moves the cursor to position 0
+        # Docs: https://www.scintilla.org/ScintillaDoc.html#SCI_DOCUMENTSTART
+        editor.setCursorPosition(0,0)
+        
+        count = 0
+        found = editor.findFirst(
+            find_text, regex, case_sensitive, whole_word,
+            False,      # don't warp. We start from the top then go down
+            True,       # forward
+            0, 0,        # start at line 0, col 0
+            True, False
+        )
+        
+        while found:
+            editor.replace(replace_text)
+            count += 1
+            # findNext continues from where the last match was
+            # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a
+            found = editor.findNext()
+        
+        self.statusBar().showMessage(f"Replace {count} occurrences", 3000)
+    
+        
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    main = MainWindow()
+    sys.exit(app.exec())

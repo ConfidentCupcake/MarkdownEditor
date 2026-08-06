@@ -1,0 +1,141 @@
+QMainWindow {
+    background-color: #282c34;
+    color: #d3d3d3;
+}
+
+QMenuBar {
+    min-height: 20px;
+    min-width: 50px;
+    background-color: #2d2d2d;
+    color: floralwhite;
+    border-bottom: 1px solid #4a4e56;
+}
+
+QMenuBar::item:selected{
+    background-color: #4d4d4d;
+}
+
+QTabWidget {
+    background-color: #282c34;
+    color: #d3d3d3;
+    border-bottom: 1px solid #4a4e56;
+}
+
+QTabBar::tab {
+    color: #d3d3d3;
+    min-width: 10ex;
+    max-height: 25ex;
+    padding: 10px 5px;
+    border-bottom: 1px solid #4a4e56;
+}
+
+QTabBar::tab::selected {
+    background-color: rgb(36,36,36);
+    color: #d3d3d3;
+    border-style: none;
+}
+QTabBar::close-button {
+    image: ":/icons/close-icon.svg";
+}
+
+QSplitter {
+    background-color: #282c34;
+}
+
+QSplitter::handle {
+    background-color: #4a4e56;
+}
+
+QScrollBar::vertical {
+    border: none;
+    width: 14px;
+    margin: 15px 0 15px 0;
+    background-color: #282c34;
+    border-radius: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #3e3d3d;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #4c4a4a;
+}
+
+QScrollBar::handle:vertical:pressed {
+    background-color: #5c5b5b;
+}
+
+QScrollBar::sub-line::vertical {
+    border: none;
+    background: none;
+    height: 15px;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    subcontrol-position: top;
+    subcontrol-origin: margin;
+}
+
+QScrollBar::add-line::vertical {
+    border: none;
+    background: none;
+    height: 15 px;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    subcontrol-position: bottom;
+    subcontrol-origin: margin;
+}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+
+QScrollBar::horizontal {
+    border: none;
+    width: 14px;
+    margin: 15px 0 15px 0;
+    background-color: #282c34;
+    border-radius: 0px;
+}
+
+QScrollBar::handle:horizontal  {
+    background-color: #3e3d3d;
+}
+
+QScrollBar::handle:horizontal  {
+    background-color: #4c4a4a;
+}
+
+QScrollBar::handle:horizontal :pressed {
+    background-color: #5c5b5b;
+}
+
+QScrollBar::sub-line::horizontal  {
+    border: none;
+    background: none;
+    height: 15 px;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    subcontrol-position: top;
+    subcontrol-origin: margin;
+}
+
+QScrollBar::add-line::horizontal  {
+    border: none;
+    background: none;
+    height: 15 px;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    subcontrol-position: bottom;
+    subcontrol-origin: margin;
+}
+
+QScrollBar::add-page:horizontal , QScrollBar::sub-page:horizontal  {
+    background: none;
+}
+
+
+
+
+

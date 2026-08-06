@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# PyInstaller output (you build the exe separately, don't store it in git)
+*.exe
+*.spec
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Personal settings (contains your interpreter path)
+settings.json
+
+# Icons (optional — keep these if you want them in the repo)
+# icons/

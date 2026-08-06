@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e2127"/>
+      <stop offset="100%" style="stop-color:#282c34"/>
+    </linearGradient>
+    <linearGradient id="bracketGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#61afef"/>
+      <stop offset="100%" style="stop-color:#528bff"/>
+    </linearGradient>
+    <linearGradient id="docGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e06c75"/>
+      <stop offset="100%" style="stop-color:#c678dd"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded rect -->
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#bgGrad)" stroke="#3d424d" stroke-width="2"/>
+
+  <!-- Code brackets < > -->
+  <path d="M88 72 L48 128 L88 184" fill="none" stroke="url(#bracketGrad)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M168 72 L208 128 L168 184" fill="none" stroke="url(#bracketGrad)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Center slash (representing code/programming) -->
+  <line x1="108" y1="184" x2="148" y2="72" stroke="url(#docGrad)" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- Small dots (like syntax highlighting) -->
+  <circle cx="68" cy="116" r="5" fill="#98c379"/>
+  <circle cx="68" cy="140" r="5" fill="#e5c07b"/>
+  <circle cx="188" cy="116" r="5" fill="#c678dd"/>
+  <circle cx="188" cy="140" r="5" fill="#98c379"/>
+</svg>
