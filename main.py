@@ -17,12 +17,55 @@ from python_runner import PythonRunner
 from console_widget import ConsoleWidget
 from find_replace import FindReplaceBar
 
+APP_VERSION = "1.1.0"
+
+def resource_path(relative_path):
+    """
+    Get the absolute path to a bundled resource file.
+    Works both when running from source (python main.py)
+    and when running as a PyInstaller exe.
+
+    When PyInstaller bundles your app, it extracts data files
+    into a temporary folder. sys._MEIPASS points to that folder.
+    When running from source, _MEIPASS doesn't exist, so we
+    fall back to the current directory.
+
+    Docs: https://pyinstaller.org/en/stable/runtime-information.html
+    """
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self._dirty_tabs = set() # set of tab indices that have unsaved changes
         self.python_runner = PythonRunner(self)
-        self.python_runner.set_interpreter(self._load_interpreter())
+
+        # Detect if running as a bundled exe
+        if hasattr(sys, '_MEIPASS'):
+            # Running as PyInstaller exe — sys.executable is the editor itself.
+            # Try to find a real Python installation on the system.
+            import shutil
+            found_python = shutil.which("python") or shutil.which("python3")
+            if found_python:
+                self.python_runner.set_interpreter(found_python)
+            else:
+                # No Python found — load from settings or let user pick
+                saved = self._load_interpreter()
+                if saved != sys.executable:
+                    self.python_runner.set_interpreter(saved)
+                else:
+                    # Prompt user to select a Python interpreter
+                    QMessageBox.warning(
+                        self, "Python Interpreter Required",
+                        "No Python installation found.\n"
+                        "Please select your Python interpreter (python.exe)."
+                    )
+                    self.choose_interpreter()
+        else:
+            # Running from source — sys.executable is the real Python
+            self.python_runner.set_interpreter(self._load_interpreter())
         self.console = None # will be created in set_up_console_dock
         self.python_editor_active = False
         self.current_file = None
@@ -37,6 +80,12 @@ class MainWindow(QMainWindow):
            pre { background:#282c34; padding:1em; border-radius:6px; overflow-x:auto; }
            """
         self.init_ui()
+        if hasattr(sys, '_MEIPASS'):
+            # We're running as a bundled exe
+            import os
+            home = os.path.expanduser("~")
+            self.file_manager.model.setRootPath(home)
+            self.file_manager.setRootIndex(self.file_manager.model.index(home))
 
 
     def init_ui(self):
@@ -46,14 +95,26 @@ class MainWindow(QMainWindow):
         self._debounce.timeout.connect(self.render_preview)
 
         self.setWindowTitle("Code Editor")
-        self.setWindowIcon(QIcon("icons/app-icon-256.png"))
+        self.setWindowIcon(QIcon(resource_path("icons/app-icon-256.png")))
         self.resize(1400, 900)
-
-        self.setStyleSheet(open("css/style.qss", "r").read())
-
         self.window_font = QFont("sans-serif")
         self.window_font.setPointSize(13)
         self.setFont(self.window_font)
+
+        qss_path = resource_path("css/style.qss")
+        print(f"QSS path: {qss_path}")
+        print(f"QSS exists: {os.path.exists(qss_path)}")
+        try:
+            with open(qss_path, "r") as f:
+                self.setStyleSheet(f.read())
+        except FileNotFoundError as e:
+            print(f"STYLESHEET ERROR: {e}")
+            # Fallback: apply basic dark styling inline
+            self.setStyleSheet("""
+                QMainWindow { background-color: #282c34; color: #d3d3d3; }
+                QMenuBar { background-color: #2d2d2d; color: floralwhite; }
+                QTabWidget { background-color: #282c34; color: #d3d3d3; }
+            """)
 
         self.set_up_menu()
         self.set_up_body()
@@ -83,6 +144,8 @@ class MainWindow(QMainWindow):
         self.cursor_pos_label.setStyleSheet("color: #888; padding: 0 10px;")
         self.statusBar().addPermanentWidget(self.cursor_pos_label)
         self.show()
+
+        QTimer.singleShot(2000, self.check_for_updates)
 
     def _on_editor_text_changed(self):
         """Called when the current editor's text changes. Marks the tab as dirty."""
@@ -282,6 +345,11 @@ class MainWindow(QMainWindow):
         toggle_console_action.setShortcut("Ctrl+`")
         toggle_console_action.setShortcutContext(Qt.ApplicationShortcut)
         toggle_console_action.triggered.connect(self.toggle_console)
+
+        help_menu = menu_bar.addMenu("Help")
+
+        check_updates_action = help_menu.addAction("Check for Updates")
+        check_updates_action.triggered.connect(self.check_for_updates)
 
     def toggle_sidebar(self):
         """Hide/show the sidebar (side_bar + side_panel)."""
@@ -507,11 +575,11 @@ class MainWindow(QMainWindow):
         # setup labels
         self.sidebar_labels = {}
 
-        folder_label = self.get_sidebar_label("icons/folder.png", "folder")
+        folder_label = self.get_sidebar_label(resource_path("icons/folder.png"), "folder")
         self.sidebar_labels["folder"] = folder_label
         side_bar_layout.addWidget(folder_label)
 
-        search_label = self.get_sidebar_label("icons/search.png", "search")
+        search_label = self.get_sidebar_label(resource_path("icons/search.png"), "search")
         self.sidebar_labels["search"] = search_label
         side_bar_layout.addWidget(search_label)
         self.side_bar.setLayout(side_bar_layout)
@@ -765,8 +833,8 @@ class MainWindow(QMainWindow):
         }
         # Update icoon states. Reset all to gray, then set active to blue
         icon_map = {
-            "folder": ("icons/folder.png", "icons/folder-active.png"),
-            "search": ("icons/search.png", "icons/search-active.png"),
+            "folder": (resource_path("icons/folder.png"), resource_path("icons/folder-active.png")),
+            "search": (resource_path("icons/search.png"), resource_path("icons/search-active.png")),
         }
         # Reset all sidebar icons to inactive gray
         for name, (inactive, active) in icon_map.items():
@@ -1139,7 +1207,82 @@ class MainWindow(QMainWindow):
             found = editor.findNext()
         
         self.statusBar().showMessage(f"Replace {count} occurrences", 3000)
-    
+    def check_for_updates(self):
+        """
+        Check GitHub Releases API for a newer version.
+        Runs in a background thread so it doesn't freeze the GUI.
+        """
+        import urllib.request
+        import json
+        import threading
+
+        # The GitHub API endpoint for your latest release
+        # Replace YOUR_USERNAME and MarkdownEditor with your actual values
+        api_url = "https://api.github.com/repos/YOUR_USERNAME/MarkdownEditor/releases/latest"
+
+        def _check():
+            try:
+                # Create a request with a User-Agent header
+                # GitHub's API requires a User-Agent header, otherwise it returns 403
+                # Docs: https://docs.github.com/en/rest/overview/resources-in-the-rest-api#user-agent-required
+                req = urllib.request.Request(api_url)
+                req.add_header("User-Agent", "MarkdownEditor")
+
+                # urlopen fetches the URL and returns a response object
+                # Docs: https://docs.python.org/3/library/urllib.request.html#urllib.request.urlopen
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+
+                # Extract the version tag (e.g. "v1.1.0")
+                latest_version = data.get("tag_name", "")
+                # Remove the "v" prefix if present: "v1.1.0" → "1.1.0"
+                if latest_version.startswith("v"):
+                    latest_version = latest_version[1:]
+
+                # Extract the download URL for the first asset
+                assets = data.get("assets", [])
+                download_url = assets[0]["browser_download_url"] if assets else ""
+
+                # Compare versions
+                if latest_version and latest_version != APP_VERSION:
+                    # Newer version available — show dialog on the main thread
+                    # QTimer.singleShot(0, callback) runs the callback on the
+                    # main Qt event loop thread. This is important because
+                    # you can't create QDialogs from a background thread.
+                    # Docs: https://doc.qt.io/qt-5/qtimer.html#singleShot
+                    QTimer.singleShot(0, lambda: self._show_update_dialog(
+                        latest_version, download_url
+                    ))
+
+            except Exception:
+                # Network error, timeout, or API rate limit — fail silently
+                # GitHub's API allows 60 requests/hour for unauthenticated requests
+                # Docs: https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limiting
+                pass
+
+        # Run the check in a background daemon thread
+        # daemon=True means the thread won't prevent the app from closing
+        # Docs: https://docs.python.org/3/library/threading.html#threading.Thread
+        thread = threading.Thread(target=_check, daemon=True)
+        thread.start()
+
+    def _show_update_dialog(self, version: str, download_url: str):
+        """Show a dialog telling the user about the update."""
+        reply = QMessageBox.information(
+            self,
+            "Update Available",
+            f"A new version ({version}) is available!\n\n"
+            f"You are currently running {APP_VERSION}.\n\n"
+            f"Click OK to open the download page in your browser.",
+            QMessageBox.Ok | QMessageBox.Cancel,
+            QMessageBox.Ok
+        )
+
+        if reply == QMessageBox.Ok:
+            # webbrowser.open opens the URL in the user's default browser
+            # Docs: https://docs.python.org/3/library/webbrowser.html#webbrowser.open
+            import webbrowser
+            webbrowser.open(download_url)
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
