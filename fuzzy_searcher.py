@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 import re
 
-
-
 class SearchItem(QListWidgetItem):
     def __init__(self, name, full_path, lineno, end, line):
         self.name = name

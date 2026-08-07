@@ -120,4 +120,29 @@ class PythonRunner(QObject):
         # Docs: https://docs.python.org/3/library/shlex.html#shlex.split
         arg_list = ["-u", str(path)] + shlex.split(args)
         self.process.start(self.interpreter, arg_list)
+    
+    def run_pip(self, args: str):
+        """
+        Run a pip command using the selected interpreter.
         
+        Examples:
+            args = "install requests"           -> python -m pip install requests
+            args = "uninstall numpy"           -> python -m pip uninstall numpy
+            args = "list"           -> python -m pip list
+         
+        We use 'python -m pip' instead of calling pip.exe directly
+        because pip.exe might not be on the PATH, but 'python -m pip'
+        always works as long as the interpreter has pip installed.
+        """
+        if self.is_running():
+            self.stop()
+        
+        import os
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONUNBUFFERED", "1")
+        env.insert("PYTHONIOENCODING", "utf-8")
+        
+        self.process.setProcessEnvironment(env)
+        self.process.setWorkingDirectory(os.path.expanduser("~"))
+        
+        self.process.start(self.interpreter, ["-m", "pip"] + args.split())

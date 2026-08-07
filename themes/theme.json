@@ -136,6 +136,18 @@
         }
       },
       {
+        "decorator": {
+          "color": "#c678dd",
+          "paper-color": "#282c34",
+          "font": {
+            "family": "sans-serif",
+            "font-size": 14,
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
         "header": {
           "color": "#e50f21",
           "paper-color": "#282c34",
