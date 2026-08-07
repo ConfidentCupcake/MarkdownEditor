@@ -68,7 +68,7 @@ class FindReplaceBar(QWidget):
         self.close_btn.setFixedSize(28,28)
         self.close_btn.setToolTip("Close (Escape)")
         
-        find_row.addWidget(QLabel("Find:"))
+        find_row.addWidget(find_label)
         find_row.addWidget(self.find_input)
         find_row.addWidget(self.find_next_btn)
         find_row.addWidget(self.find_prev_btn)
@@ -95,7 +95,7 @@ class FindReplaceBar(QWidget):
         self.replace_all_btn.setFixedHeight(28)
         self.replace_all_btn.setToolTip("Replace all occurrences")
         
-        replace_row.addWidget(QLabel("Replace:"))
+        replace_row.addWidget(replace_label)
         replace_row.addWidget(self.replace_input)
         replace_row.addWidget(self.replace_btn)
         replace_row.addWidget(self.replace_all_btn)

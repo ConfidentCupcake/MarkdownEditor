@@ -17,6 +17,20 @@ from python_runner import PythonRunner
 
 class ConsoleWidget(QWidget):
     input_submitted = pyqtSignal(str) # emitted when user presses Enter in input line.
+    # Map of ANSI color codes to hex colors
+    # This dictionary maps the number inside \033[Nm to a hex color string
+    # that we can pass to QColor()
+    ANSI_COLORS = {
+        "30": "#abb2bf",   # black (use light gray for visibility)
+        "31": "#e06c75",   # red
+        "32": "#98c379",   # green
+        "33": "#e5c07b",   # yellow
+        "34": "#61afef",   # blue
+        "35": "#c678dd",   # magenta
+        "36": "#56b6c2",   # cyan
+        "37": "#dcdfe4",   # white
+        "0":  "#abb2bf",   # reset → default color
+    }
     def __init__(self, runner: PythonRunner, parent=None):
         super().__init__(parent)
         # The console takes a reference to the PythonRunner. It needs to connect to the runner's signals and call its methods
@@ -76,18 +90,23 @@ class ConsoleWidget(QWidget):
         layout.addWidget(self.input_line)
         
     def _connect_signals(self):
-        # Runner -> Console display
-        self.runner.output_ready.connect(lambda text: self._append(text, "#abb2bf")) # passes a color along with a text
-        self.runner.error_ready.connect(lambda text: self._append(text, "#e06c75"))
+        # Use the ANSI parser for stdout and stderr
+        self.runner.output_ready.connect(
+            lambda text: self._append_ansi(text, "#abb2bf")
+        )
+        self.runner.error_ready.connect(
+            lambda text: self._append_ansi(text, "#e06c75")
+        )
+
         self.runner.process_finished.connect(self._on_finished)
         self.runner.state_changed.connect(self._on_state_changed)
-        
+
         # Button clicks
         self.stop_btn.clicked.connect(self.runner.stop)
         self.clear_btn.clicked.connect(self.output.clear)
-        
-        # Input line -> runner stdin
-        self.input_line.returnPressed.connect(self._submit_input) # a built-in QLineEdit signal that fires when user presses Enter in the input field
+
+        # Input line → runner stdin
+        self.input_line.returnPressed.connect(self._submit_input)
     
     def _submit_input(self):
         """Handle Enter key in input line"""
@@ -127,3 +146,46 @@ class ConsoleWidget(QWidget):
         else:
             self.status_label.setText("● Idle")
             self.status_label.setStyleSheet("color: #888; font-size: 12px;")
+
+    def _append_ansi(self, text: str, default_color: str):
+        """
+        Parse ANSI escape codes in text and append colored segments.
+
+        This method scans the text for \033[Nm sequences (where N is a color code number).
+        Text between codes is colored according to the code. \033[0m resets to the default color.
+
+        Example input: "Hello \033[31mRed World\033[0m Done"
+        Output "Hello" in gray, "Red World" in red, " Done" in gray
+        :param text:
+        :param default_color:
+        :return:
+        """
+        import re
+        # This regex matches the ANSI escape codes
+        # \033\[  — the escape sequence prefix (ESC + [)
+        # (\d+)   — one or more digits (the color code)
+        # m       — the letter m (which means "set display attribute")
+        # Docs: https://docs.python.org/3/library/re.html#re.Pattern
+        ansi_pattern = re.compile(r'\033\[(\d+)m')
+        current_color = default_color
+        pos = 0 # current position in the text string
+
+        for match in ansi_pattern.finditer(text):
+            # Text before the escape code (plain text to display)
+            before = text[pos:match.start()]
+            if before:
+                self._append(before, current_color)
+
+            # Extract the color code from the regex match
+            code = match.group(1)
+            # Look up the color in our dictionary
+            # If the code isn't in our map, keep the current color
+            if code in self.ANSI_COLORS:
+                current_color = self.ANSI_COLORS[code]
+
+            # Move position past the escape code
+            pos = match.end()
+        remaining = text[pos:]
+        if remaining:
+            self._append(remaining, current_color)
+

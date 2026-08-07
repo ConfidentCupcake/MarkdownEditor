@@ -91,4 +91,33 @@ class PythonRunner(QObject):
     
     def is_running(self) -> bool:
         return self.process.state() != QProcess.NotRunning
+
+    def run_file_with_args(self, path: Path, args: str, cwd: Path = None):
+        """
+        Run a .py file with command-line arguments
+
+        `args` is a string like "--verbose --output result.txt"
+        It gets split into a list: ["--verbose", "--output", "result.txt"]
+        The Final command is: python -u script.py --verbose --output result.txt
+        :param path:
+        :param args:
+        :param cwd:
+        :return:
+        """
+        import shlex
+
+        if self.is_running():
+            self.stop()
+
+        env = self._build_env(cwd or path.parent)
+
+        self.process.setProcessEnvironment(env)
+        self.process.setWorkingDirectory(str(cwd or path.parent))
+        # Build the argument list: ["-u", "script.py", "--verbose", "--output", "result.txt"]
+        # shlex.split parses the args stings the same way a shell would:
+        # '--output "my file.txt"' → ["--output", "my file.txt"]
+        # (preserves quoted strings with spaces)
+        # Docs: https://docs.python.org/3/library/shlex.html#shlex.split
+        arg_list = ["-u", str(path)] + shlex.split(args)
+        self.process.start(self.interpreter, arg_list)
         

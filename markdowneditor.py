@@ -65,6 +65,8 @@ class MarkdownEditor(QsciScintilla):
         self.setMarginsForegroundColor(QColor('#ff888888'))
         self.setMarginsBackgroundColor(QColor('#282c34'))
         self.setMarginsFont(self.window_font)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setWrapMode(QsciScintilla.WrapNone)
 
     # No need to assign any function to handle key press, this overloads the function from base class
     def keyPressEvent(self, e: QKeyEvent) -> None:

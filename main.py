@@ -1,4 +1,3 @@
-import resources_rc
 import os
 import sys
 import markdown
@@ -16,6 +15,7 @@ from fuzzy_searcher import SearchItem, SearchWorker
 from python_runner import PythonRunner
 from console_widget import ConsoleWidget
 from find_replace import FindReplaceBar
+import resources_rc
 
 APP_VERSION = "1.2.0"
 
@@ -146,9 +146,34 @@ class MainWindow(QMainWindow):
         self.cursor_pos_label = QLabel("Ln 1, Col 1")
         self.cursor_pos_label.setStyleSheet("color: #888; padding: 0 10px;")
         self.statusBar().addPermanentWidget(self.cursor_pos_label)
+
+        # Word count label - shows "Words: X | Chars: Y"
+        self.word_count_label = QLabel("Words: 0 | Chars: 0")
+        self.word_count_label.setStyleSheet("color: #888; padding: 0 10px;")
+        self.statusBar().addPermanentWidget(self.word_count_label)
+
         self.show()
 
         QTimer.singleShot(2000, self.check_for_updates)
+
+    def update_word_count(self):
+        """Update the word/character count in the status bar."""
+        editor = self.tab_view.currentWidget()
+
+        # Only show word count for Markdown files
+        if editor is None or not isinstance(editor, MarkdownEditor):
+            self.word_count_label.setText("")
+            return
+
+        text = editor.text()
+        # Count words: split the text by whitespace and count the pieces
+        # split() with no argument splits on ANY whitespace (spaces, tabs, newlines) and removes empty strings automatically.
+        words = len(text.split())
+
+        # Count characters: len(text) includes whitespace and newlines
+        chars = len(text)
+
+        self.word_count_label.setText(f"Words: {words} | Chars: {chars}")
 
     def _on_editor_text_changed(self):
         """Called when the current editor's text changes. Marks the tab as dirty."""
@@ -324,7 +349,12 @@ class MainWindow(QMainWindow):
         toggle_comment_action.setShortcut("Ctrl+1")
         toggle_comment_action.setShortcutContext(Qt.ApplicationShortcut)
         toggle_comment_action.triggered.connect(self.toggle_comment)
-        
+
+        edit_menu.addSeparator()
+        goto_definition_action = edit_menu.addAction("Go to Definition")
+        goto_definition_action.setShortcut("F12")
+        goto_definition_action.setShortcutContext(Qt.ApplicationShortcut)
+        goto_definition_action.triggered.connect(self._trigger_goto_definition)
 
         # Mode menu
         mode_menu = menu_bar.addMenu("Mode")
@@ -347,6 +377,11 @@ class MainWindow(QMainWindow):
         run_file_action.setShortcut("F5")
         run_file_action.setShortcutContext(Qt.ApplicationShortcut)
         run_file_action.triggered.connect(self.run_current_file)
+
+        run_with_args_action = run_menu.addAction("Run with Arguments")
+        run_with_args_action.setShortcut("Shift+F5")
+        run_with_args_action.setShortcutContext(Qt.ApplicationShortcut)
+        run_with_args_action.triggered.connect(self.run_with_arguments)
         
         run_selection_action = run_menu.addAction("Run Selection")
         run_selection_action. setShortcut("Ctrl+Return")
@@ -385,14 +420,66 @@ class MainWindow(QMainWindow):
 
         check_updates_action = help_menu.addAction("Check for Updates")
         check_updates_action.triggered.connect(self.check_for_updates)
-    
+
+    def _trigger_goto_definition(self):
+        editor = self.tab_view.currentWidget()
+        if isinstance(editor, PythonEditor):
+            editor.goto_definition()
+
+    def _open_file_at_position(self, file_path: str, line: int, column: int):
+        """Open a file and jump to a specific line/column."""
+        self.set_new_tab(Path(file_path))
+        editor = self.tab_view.currentWidget()
+        if editor is not None:
+            editor.setCursorPosition(line, column)
+            editor.ensureLineVisible(line)
+            editor.setFocus()
+
+    def run_with_arguments(self):
+        """Save the current file, ask for arguments, then run it."""
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+
+        path = getattr(editor, "path", None)
+        if path is None:
+            self.save_as()
+            path = getattr(editor, "path", None)
+            if path is None:
+                return
+        else:
+            self.save_file()
+
+        # QInputDialog.getText shows a dialog with a single text input.
+        # Parameters: parent, title, label, echo mode, default text
+        # Returns: (text, ok) where ok is True if user clicked OK
+        args, ok = QInputDialog.getText(
+            self,
+            "Run with Arguments",
+            "Command-line arguments",
+            QLineEdit.Normal,
+            "",
+        )
+        if not ok:
+            # User cancelled
+            return
+
+        # Show the console
+        self.console_dock.show()
+        # Run the file with the arguments
+        self.python_runner.run_file_with_args(Path(path), args, cwd=Path(path).parent)
+
+
     def save_all(self):
         """Save all open tabs that have a file path."""
         saved_count = 0
-        
+
+        # Save the currently active tab index so we can restore it
         current_index = self.tab_view.currentIndex()
         
         for i in range(self.tab_view.count()):
+            # Set each tab as the current widget temporarily
+            # so save_file() operates on it
             self.tab_view.setCurrentIndex(i)
             
             editor = self.tab_view.widget(i)
@@ -401,8 +488,12 @@ class MainWindow(QMainWindow):
             
             path = getattr(editor, "path", None)
             if path is not None:
+                # This tab has a file path - save it
+                # We call the save logic directly instead of self.save_file()
+                # to avoid status bar spam from each individual save
                 path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
-                
+
+                # Remove dirty indicator
                 self._dirty_tabs.discard(i)
                 title = self.tab_view.tabText(i)
                 if title.startswith("● "):
@@ -473,7 +564,7 @@ class MainWindow(QMainWindow):
             
     def _toggle_comment_single_line(self, editor):
         """Toggle comment on the line where the cursor currently is."""
-        line, index = editor.setCursorPosition()
+        line, index = editor.getCursorPosition()
         
         # Read the text of the current line
         # editor.text(line) returns the text of line `line`INCLUDING the newline
@@ -504,7 +595,7 @@ class MainWindow(QMainWindow):
         """Toggle comments on all lines in the current selection."""
         # Get the selection boundaries
         # getSelection returns (lineFrom, indexFrom, lineTo, indexTo)
-        line_from, index_from, line_to, index_to = editor.getSeletion()
+        line_from, index_from, line_to, index_to = editor.getSelection()
         
         if line_from > line_to:
             line_from, line_to = line_to, line_from
@@ -716,6 +807,10 @@ class MainWindow(QMainWindow):
         
         self.editor.cursorPositionChanged.connect(self.update_cursor_position)
         self.editor.textChanged.connect(self._on_editor_text_changed)
+        self.editor.textChanged.connect(self.update_word_count)
+        if isinstance(self.editor, PythonEditor):
+            self.editor.goto_definition_requested.connect(self._open_file_at_position)
+
         
         if is_new_file:
             self.tab_view.addTab(self.editor, "untitled")
@@ -1033,7 +1128,8 @@ class MainWindow(QMainWindow):
             if title.startswith("● "):
                 title = title[2:]
             reply = QMessageBox.question(
-                self, title,
+                self, "Unsaved Changes",
+                f"'{title}' has unsaved changes. Close Anyway?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No  # default button
             )
@@ -1097,7 +1193,9 @@ class MainWindow(QMainWindow):
     def new_file(self):
         editor = self.get_editor()
         editor.textChanged.connect(self._on_editor_text_changed)
+        editor.textChanged.connect(self.update_word_count)
         editor.cursorPositionChanged.connect(self.update_cursor_position)
+        editor.goto_definition_requested.connect(self._open_file_at_position)
         editor.cursorPositionChanged.connect(lambda l, i: self.sync_scroll(editor))
         editor.textChanged.connect(self._debounce.start)
         editor.verticalScrollBar().valueChanged.connect(
@@ -1243,6 +1341,7 @@ class MainWindow(QMainWindow):
         if editor is not None:
             line, index = editor.getCursorPosition()
             self.update_cursor_position(line, index)
+            self.update_word_count()
 
 
     def change_editor_python(self):
@@ -1276,7 +1375,7 @@ class MainWindow(QMainWindow):
         if not self._preview_ready or editor is not self.tab_view.currentWidget():
             return
         total = editor.lines()
-        visible = editor.SendScintilla(editor.SCI_LINESONSCREEN)
+        visible = editor.SendScintilla(2370)
         first = editor.firstVisibleLine()
         denom = max(total - visible, 1)
         ratio = min(max(first / denom, 0.0), 1.0)
@@ -1303,6 +1402,7 @@ class MainWindow(QMainWindow):
 
         new_editor = EditorClass(path=path)
         new_editor.textChanged.connect(self._on_editor_text_changed)
+        new_editor.textChanged.connect(self.update_word_count)
         new_editor.cursorPositionChanged.connect(self.update_cursor_position)
         if hasattr(new_editor, "setTextSafely"):
             new_editor.setTextSafely(text)
