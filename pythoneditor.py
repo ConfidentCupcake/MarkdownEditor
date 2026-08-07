@@ -1,4 +1,4 @@
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QColor, QKeyEvent
 from PyQt5.Qsci import QsciScintilla, QsciAPIs
 from pathlib import Path
@@ -15,7 +15,13 @@ class PythonEditor(QsciScintilla):
         self.is_python_file = is_python_file
         self._loading_text = False
         self._shutting_down = False
+        self._autocomplete_timer = QTimer(self)
+        self._autocomplete_timer.setSingleShot(True)
+        self._autocomplete_timer.setInterval(300)
+        self._autocomplete_timer.timeout.connect(self._trigger_autocomplete)
 
+        self._pending_line = 0
+        self._pending_index = 0
         self.cursorPositionChanged.connect(self._cursorPositionChanged)
 
         self.setUtf8(True)
@@ -33,7 +39,7 @@ class PythonEditor(QsciScintilla):
         self.setEolVisibility(False)
 
         self.setAutoCompletionSource(QsciScintilla.AcsAll)
-        self.setAutoCompletionThreshold(1)
+        self.setAutoCompletionThreshold(3)
         self.setAutoCompletionCaseSensitivity(False)
         self.setAutoCompletionUseSingle(QsciScintilla.AcusNever)
 
@@ -88,12 +94,27 @@ class PythonEditor(QsciScintilla):
             self._loading_text = False
 
     def _cursorPositionChanged(self, line: int, index: int) -> None:
+        """Called when the cursor moves. Starts a debounce timer instead
+        of immediately running Jedi analysis."""
         if not self.is_python_file or self._loading_text or self._shutting_down:
+            return
+        # Store the position and restart the timer
+        # The timer will fire 300ms after the LAST cursor movement
+        # If the user keeps moving the cursor, the timer keeps resetting
+        self._pending_line = line
+        self._pending_index = index
+        self._autocomplete_timer.start()
+
+    def _trigger_autocomplete(self):
+        """Called 300ms after the cursor stopped moving. Now run Jedi."""
+        if self._shutting_down or self._loading_text:
             return
         text = self.text()
         if not text.strip():
             return
-        self.auto_completer.get_completions(line + 1, index, text)
+        self.auto_completer.get_completions(
+            self._pending_line + 1, self._pending_index, text
+        )
 
     def _apply_completions(self, names):
         if self._shutting_down:

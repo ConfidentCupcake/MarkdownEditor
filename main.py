@@ -17,7 +17,7 @@ from python_runner import PythonRunner
 from console_widget import ConsoleWidget
 from find_replace import FindReplaceBar
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 def resource_path(relative_path):
     """
@@ -41,6 +41,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._dirty_tabs = set() # set of tab indices that have unsaved changes
         self.python_runner = PythonRunner(self)
+        self.settings = QSettings("CodeEditor", "CodeEditor")
+        # Load the saved recent files list, default to empty list
+        self.recent_files = self.settings.value("recent_files", [], type=list)
 
         # Detect if running as a bundled exe
         if hasattr(sys, '_MEIPASS'):
@@ -220,7 +223,14 @@ class MainWindow(QMainWindow):
         open_file.setShortcut("Ctrl+O")
         open_file.setShortcutContext(Qt.ApplicationShortcut)
         open_file.triggered.connect(self.open_file)
-
+        
+        # Open Recent submenu
+        # addMenu returns a QMenu object. We store it as an instance
+        # variable so we can rebuild it when the recent files list changes.
+        self.recent_menu = file_menu.addMenu("Open Recent")
+        self._update_recent_menu()
+        
+        
         open_folder = file_menu.addAction("Open Folder")
         open_folder.setShortcut("Ctrl+K")
         open_folder.setShortcutContext(Qt.ApplicationShortcut)
@@ -236,6 +246,16 @@ class MainWindow(QMainWindow):
         save_as.setShortcut("Ctrl+Shift+S")
         save_as.setShortcutContext(Qt.ApplicationShortcut)
         save_as.triggered.connect(self.save_as)
+        
+        save_all_action = file_menu.addAction("Save All")
+        save_all_action.setShortcut("Ctrl+Shift+A")
+        save_all_action.setShortcutContext(Qt.ApplicationShortcut)
+        save_all_action.triggered.connect(self.save_all)
+        
+        close_all_action = file_menu.addAction("Close All")
+        close_all_action.setShortcut("Ctrl+Shift+W")
+        close_all_action.setShortcutContext(Qt.ApplicationShortcut)
+        close_all_action.triggered.connect(self._close_all_tabs)
 
         # Edit menu
         edit_menu = menu_bar.addMenu("Edit")
@@ -290,6 +310,21 @@ class MainWindow(QMainWindow):
         replace_action.setShortcut("Ctrl+H")
         replace_action.setShortcutContext(Qt.ApplicationShortcut)
         replace_action.triggered.connect(self.show_replace_bar)
+        
+        edit_menu.addSeparator()
+        
+        goto_action = edit_menu.addAction("Go to Line")
+        goto_action.setShortcut("Ctrl+G")
+        goto_action.setShortcutContext(Qt.ApplicationShortcut)
+        goto_action.triggered.connect(self.goto_line)
+        
+        edit_menu.addSeparator()
+        
+        toggle_comment_action = edit_menu.addAction("Toggle Comment")
+        toggle_comment_action.setShortcut("Ctrl+1")
+        toggle_comment_action.setShortcutContext(Qt.ApplicationShortcut)
+        toggle_comment_action.triggered.connect(self.toggle_comment)
+        
 
         # Mode menu
         mode_menu = menu_bar.addMenu("Mode")
@@ -350,7 +385,194 @@ class MainWindow(QMainWindow):
 
         check_updates_action = help_menu.addAction("Check for Updates")
         check_updates_action.triggered.connect(self.check_for_updates)
+    
+    def save_all(self):
+        """Save all open tabs that have a file path."""
+        saved_count = 0
+        
+        current_index = self.tab_view.currentIndex()
+        
+        for i in range(self.tab_view.count()):
+            self.tab_view.setCurrentIndex(i)
+            
+            editor = self.tab_view.widget(i)
+            if editor is None:
+                continue
+            
+            path = getattr(editor, "path", None)
+            if path is not None:
+                path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
+                
+                self._dirty_tabs.discard(i)
+                title = self.tab_view.tabText(i)
+                if title.startswith("● "):
+                    self.tab_view.setTabText(i, title[2:])
+                    
+                saved_count += 1
 
+        # Restore the originally active tab
+        self.tab_view.setCurrentIndex(current_index)
+
+        self.statusBar().showMessage(f"Saved {saved_count} file(s)", 3000)
+    
+    def _update_recent_menu(self):
+        """Rebuild the 'Open Recent' submenu from the recent_files list."""
+        self.recent_menu.clear()
+        
+        if not self.recent_files:
+            empty_action = self.recent_menu.addAction("(No recent files)")
+            empty_action.setEnabled(False)
+            return
+        
+        for path in self.recent_files:
+            action = self.recent_menu.addAction(Path(path).name)
+            action.setData(path)
+            action.triggered.connect(lambda checked, p=path: self.open_recent_file(p))
+     
+    def open_recent_file(self, path: str):
+        """Open a file from the recent files list."""
+        file_path = Path(path)
+        if not file_path.exists():
+            QMessageBox.information(self, "File Not Found", f"The file '{file_path.name}' no longer exists.")
+            self.recent_files.remove(path)
+            self._save_recent_files()
+            self._update_recent_menu()
+            return
+        self.set_new_tab(file_path)
+        
+    def _add_to_recent_files(self, path: str):
+        """Add a file path to the recent files list (max 10)."""
+        path = str(path)
+        
+        if path in self.recent_files:
+            self.recent_files.remove(path)
+            
+        self.recent_files.insert(0, path)
+        self.recent_files = self.recent_files[:10]
+        self._save_recent_files()
+        self._update_recent_menu()
+        
+    def _save_recent_files(self):
+        """Persist the recent files list to QSettings."""
+        self.settings.setValue("recent_files", self.recent_files)
+        
+    
+    def toggle_comment(self):
+        """Toggle # comment on the current line or selected lines."""
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+        
+        if not isinstance(editor, PythonEditor):
+            return
+        
+        if editor.hasSelectedText():
+            self._toggle_comment_selection(editor)
+        else:
+            self._toggle_comment_single_line(editor)
+            
+    def _toggle_comment_single_line(self, editor):
+        """Toggle comment on the line where the cursor currently is."""
+        line, index = editor.setCursorPosition()
+        
+        # Read the text of the current line
+        # editor.text(line) returns the text of line `line`INCLUDING the newline
+        line_text = editor.text(line)
+        
+        stripped = line_text.lstrip()
+        if stripped.startswith("#"):
+            # Uncomment: remove the first # we find
+            hash_pos = line_text.index("#")
+            
+            # Check if there's a space after # (common fomratting: "# code")
+            if hash_pos + 1 < len(line_text) and line_text[hash_pos + 1] == " ":
+                # Remove just "# + space"
+                editor.setSelection(line, hash_pos, line, hash_pos + 2)
+            else:
+                # Remove just "#"
+                editor.setSelection(line, hash_pos, line, hash_pos + 1)
+            editor.replace("")
+        else:
+            # Comment: insert "# " at the beginning of the line
+            # insertAt(text, line, index) inserts text at the given position
+            editor.insertAt("# ", line, 0)
+        # Move cursor back to a sensible position
+        editor.setCursorPosition(line, 0)
+        editor.ensureLineVisible(line)
+        
+    def _toggle_comment_selection(self, editor):
+        """Toggle comments on all lines in the current selection."""
+        # Get the selection boundaries
+        # getSelection returns (lineFrom, indexFrom, lineTo, indexTo)
+        line_from, index_from, line_to, index_to = editor.getSeletion()
+        
+        if line_from > line_to:
+            line_from, line_to = line_to, line_from
+            
+        first_line_text = editor.text(line_from)
+        is_commented = first_line_text.lstrip().startswith("#")
+        
+        # We need to modify lines from bottom to top when INSERTING text, because inserting at line N shifts all llines below it.
+        # If we go top-to-bottom, line numbers would be wrong after the first insert.
+        # When REMOVING text, we also go bottom-to-top to keep line numbers stable.
+        
+        if is_commented:
+        # Uncomment all selected lines
+            for line in range(line_to, line_from - 1, -1):
+                line_text = editor.text(line)
+                stripped = line_text.lstrip()
+                if stripped.startswith("#"):
+                    hash_pos = line_text.index("#")
+                    if hash_pos + 1 < len(line_text) and line_text[hash_pos + 1] == " ":
+                        editor.setSelection(line, hash_pos, line, hash_pos + 2)
+                    else:
+                        editor.setSelection(line, hash_pos, line, hash_pos + 1)
+                    editor.replace("")
+        else:
+            # Comment ll selected lines
+            # Go from BOTTOM to TOP so inserting "# " doesn't shift line numbers
+            for line in range(line_to, line_from -1, -1):
+                editor.insertAt("# ", line, 0)
+        # Restore the selection to cover all modified lines
+        editor.setSelection(line_from, 0, line_to, editor.lineLength(line_to))
+                
+    
+    def goto_line(self):
+        """Open a dialog to jump to a specific line number."""
+        editor = self.tab_view.currentWidget()
+        if editor is None:
+            return
+        
+        max_lines = editor.lines()
+        # editor.lines () returns the total number of lines in the document.
+        # We us this a sthe maximum value for the spin box so the user can't enter a line number that doesn't exitst.
+        
+        # QInputDialog.getInt shows a small dialog with a spin box.
+        # Parameters: parent, title, label, default value, minimum, maximum
+        # Returns: (value, ok) where ok is True if the user clicked ok
+        # Docs: https://doc.qt.io/qt-5/qinputdialog.html#getInt
+        line_num, ok = QInputDialog.getInt(
+            self,
+            "Go to Line",
+            f"Line number (1-{max_lines}):",
+            1, # default value shown in the spin box
+            1, # minumum value
+            max_lines, # maximum value
+        )
+        
+        if not ok:
+            return
+        
+        target_line = line_num -1
+        
+        editor.setCursorPosition(target_line, 0)
+        
+        editor.ensureLineVisible(target_line)
+        
+        editor.setFocus()
+    
+        
+    
     def toggle_sidebar(self):
         """Hide/show the sidebar (side_bar + side_panel)."""
         # self.side_bar is the thin icon strip
@@ -475,6 +697,7 @@ class MainWindow(QMainWindow):
                 if getattr(editor, "path", None) == path:
                     self.tab_view.setCurrentIndex(i)
                     return
+        
 
         if self.python_editor_active:
             self.editor = self.get_editor(path, path.suffix in {".md", ".pyw", ".py"})
@@ -509,6 +732,8 @@ class MainWindow(QMainWindow):
                 self.editor.blockSignals(False)
             self.tab_view.addTab(self.editor, path.name)
             self.current_file = path
+            # Add to recent files
+            self._add_to_recent_files(str(path))
 
 
     def get_frame(self) -> QFrame:
@@ -895,6 +1120,7 @@ class MainWindow(QMainWindow):
             return
         f = Path(new_file)
         self.set_new_tab(f)
+        self._add_to_recent_files(str(f))
 
     def open_folder(self):
         # open folder

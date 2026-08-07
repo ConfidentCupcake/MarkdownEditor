@@ -7,6 +7,12 @@ import keyword
 import types
 import builtins
 import os
+import sys
+
+def _resource_path(relative_path):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -17,7 +23,7 @@ class NeutronLexer(QsciLexerCustom):
         self.editor = editor
         self.language_name = language_name
         self.theme_json = None
-        self.theme = theme or os.path.join(BASE_DIR, "themes", "theme.json")
+        self.theme = theme or _resource_path(os.path.join("themes", "theme.json"))
 
         self.token_list = []
         self.keyword_list = []
@@ -44,11 +50,12 @@ class NeutronLexer(QsciLexerCustom):
         self.FUNCTIONS = 8
         self.CLASSES = 9
         self.FUNCTION_DEF = 10
+        self.DECORATOR = 11
 
         self.default_names = [
             "default", "keyword", "types", "string", "keyargs",
             "brackets", "comments", "constants", "functions",
-            "classes", "function_def",
+            "classes", "function_def", "decorator",
         ]
 
         self.font_weights = {
@@ -106,18 +113,12 @@ class NeutronLexer(QsciLexerCustom):
             self.FUNCTIONS: "FUNCTIONS",
             self.CLASSES: "CLASSES",
             self.FUNCTION_DEF: "FUNCTION_DEF",
+            self.DECORATOR: "DECORATOR",
         }
         return names.get(style, "")
 
-    # ------------------------------------------------------------------ #
-    #  Byte <-> character offset conversion
-    # ------------------------------------------------------------------ #
     @staticmethod
     def _byte_pos_to_char_index(text: str, byte_pos: int) -> int:
-        """QScintilla hands us BYTE offsets, but editor.text() is a Python
-        Unicode string. Convert a byte position to the matching character
-        index so slicing stays correct for multibyte content (umlauts,
-        emoji, em-dashes, etc.)."""
         if byte_pos <= 0:
             return 0
         encoded = text.encode("utf-8")
@@ -126,7 +127,7 @@ class NeutronLexer(QsciLexerCustom):
         return len(encoded[:byte_pos].decode("utf-8", errors="ignore"))
 
     def generate_token(self, text):
-        p = re.compile(r"[*]\\/|\\/[*]|\s+|\w+|\W")
+        p = re.compile(r"\s+|\w+|\W")
         self.token_list = [(token, len(bytearray(token, "utf-8"))) for token in p.findall(text)]
 
     def next_tok(self):
@@ -150,31 +151,31 @@ class NeutronLexer(QsciLexerCustom):
                 return tok, i
             i += 1
 
+    def _compute_state_before(self, full_text, target_char_pos):
+        """
+        Scan from the beginning of the document to target_char_pos
+        and return the lexer state at that position.
 
-class PyCustomLexer(NeutronLexer):
-    def __init__(self, editor):
-        super(PyCustomLexer, self).__init__("Python", editor)
-        self.setKeywords(keyword.kwlist)
-        self.setBuiltinNames([
-            name for name, obj in vars(builtins).items()
-            if isinstance(obj, types.BuiltinFunctionType)
-        ])
-        self.setDefaultPaper(QColor("#282c34"))
+        This is the GUARANTEED CORRECT approach — it doesn't rely on
+        any cached state. It re-parses the prefix every time.
 
-    def _state_before(self, text):
-        self.generate_token(text)
+        Returns: (in_string, in_comment, triple_string, string_delim,
+                  in_fstring, escape_next)
+        """
+        prefix = full_text[:target_char_pos]
+        self.generate_token(prefix)
 
         in_string = False
         in_comment = False
-        string_delim = None
         triple_string = False
+        string_delim = None
+        in_fstring = False
         escape_next = False
 
         while True:
             curr = self.next_tok()
             if curr is None:
                 break
-
             tok, _ = curr
 
             if in_comment:
@@ -192,21 +193,44 @@ class PyCustomLexer(NeutronLexer):
                     continue
 
                 if triple_string:
-                    if tok == string_delim:
+                    if tok in ("'", '"'):
                         p1 = self.peek_tok(0)
                         p2 = self.peek_tok(1)
-                        if p1 and p1[0] == string_delim and p2 and p2[0] == string_delim:
+                        if p1 and p1[0] == tok and p2 and p2[0] == tok:
                             self.next_tok()
                             self.next_tok()
                             in_string = False
                             triple_string = False
                             string_delim = None
+                            in_fstring = False
                     continue
 
                 if tok == string_delim:
                     in_string = False
                     string_delim = None
+                    in_fstring = False
                 continue
+
+            # f-string prefix detection
+            if tok in ("f", "fr", "rf", "r", "b", "rb", "br", "fb", "bf") and not tok.isnumeric():
+                nt = self.peek_tok(0)
+                if nt[0] in ("'", '"'):
+                    p1 = self.peek_tok(1)
+                    p2 = self.peek_tok(2)
+                    if p1 and p1[0] == nt[0] and p2 and p2[0] == nt[0]:
+                        self.next_tok()
+                        self.next_tok()
+                        in_string = True
+                        triple_string = True
+                        string_delim = nt[0]
+                        in_fstring = "f" in tok
+                    else:
+                        self.next_tok()
+                        in_string = True
+                        triple_string = False
+                        string_delim = nt[0]
+                        in_fstring = "f" in tok
+                    continue
 
             if tok in ("'", '"'):
                 p1 = self.peek_tok(0)
@@ -217,31 +241,43 @@ class PyCustomLexer(NeutronLexer):
                     in_string = True
                     triple_string = True
                     string_delim = tok
+                    in_fstring = False
                 else:
                     in_string = True
                     triple_string = False
                     string_delim = tok
+                    in_fstring = False
                 continue
 
             if tok == "#":
                 in_comment = True
+                continue
 
-        return in_string, in_comment, string_delim, triple_string, escape_next
+        return in_string, in_comment, triple_string, string_delim, in_fstring, escape_next
+
+
+class PyCustomLexer(NeutronLexer):
+    def __init__(self, editor):
+        super(PyCustomLexer, self).__init__("Python", editor)
+        self.setKeywords(keyword.kwlist)
+        self.setBuiltinNames([
+            name for name, obj in vars(builtins).items()
+            if isinstance(obj, (types.BuiltinFunctionType, type))
+        ])
+        self.setDefaultPaper(QColor("#282c34"))
 
     def styleText(self, start: int, end: int) -> None:
         full_text = self.editor.text()
 
-        # `start` / `end` are Scintilla BYTE offsets. Convert to character
-        # indices before touching the Unicode string.
         start_char = self._byte_pos_to_char_index(full_text, start)
         end_char = self._byte_pos_to_char_index(full_text, end)
 
-        prefix = full_text[:start_char]
+        # Compute the state at the start position by re-parsing the prefix.
+        # This is O(n) but GUARANTEED CORRECT — no state caching bugs.
+        in_string, in_comment, triple_string, string_delim, in_fstring, escape_next = \
+            self._compute_state_before(full_text, start_char)
+
         chunk = full_text[start_char:end_char]
-
-        in_string, in_comment, string_delim, triple_string, escape_next = self._state_before(prefix)
-
-        # startStyling still takes the original BYTE offset for Scintilla.
         self.startStyling(start)
         self.generate_token(chunk)
 
@@ -259,7 +295,28 @@ class PyCustomLexer(NeutronLexer):
                 continue
 
             if in_string:
-                self.setStyling(tok_len, self.STRING)
+                # f-string expression handling
+                if in_fstring and not triple_string:
+                    if tok == "{":
+                        self.setStyling(tok_len, self.BRACKETS)
+                        depth = 1
+                        while depth > 0:
+                            expr_tok = self.next_tok()
+                            if expr_tok is None:
+                                break
+                            et, el = expr_tok
+                            if et == "{":
+                                depth += 1
+                                self.setStyling(el, self.BRACKETS)
+                            elif et == "}":
+                                depth -= 1
+                                self.setStyling(el, self.BRACKETS)
+                            else:
+                                self.setStyling(el, self.DEFAULT)
+                        continue
+                    self.setStyling(tok_len, self.STRING)
+                else:
+                    self.setStyling(tok_len, self.STRING)
 
                 if escape_next:
                     escape_next = False
@@ -270,25 +327,55 @@ class PyCustomLexer(NeutronLexer):
                     continue
 
                 if triple_string:
-                    if tok == string_delim:
+                    if tok in ("'", '"'):
                         p1 = self.peek_tok(0)
                         p2 = self.peek_tok(1)
-                        if p1 and p1[0] == string_delim and p2 and p2[0] == string_delim:
-                            t = self.next_tok()
-                            if t is not None:
-                                self.setStyling(t[1], self.STRING)
-                            t = self.next_tok()
-                            if t is not None:
-                                self.setStyling(t[1], self.STRING)
+                        if p1 and p1[0] == tok and p2 and p2[0] == tok:
+                            t1 = self.next_tok()
+                            self.setStyling(t1[1], self.STRING)
+                            t2 = self.next_tok()
+                            self.setStyling(t2[1], self.STRING)
                             in_string = False
                             triple_string = False
                             string_delim = None
+                            in_fstring = False
                     continue
 
                 if tok == string_delim:
                     in_string = False
                     string_delim = None
+                    in_fstring = False
                 continue
+
+            # --- Not in string or comment ---
+
+            # f-string prefix detection
+            if tok in ("f", "fr", "rf", "r", "b", "rb", "br", "fb", "bf") and not tok.isnumeric():
+                next_tok = self.peek_tok(0)
+                if next_tok[0] in ("'", '"'):
+                    p1 = self.peek_tok(1)
+                    p2 = self.peek_tok(2)
+                    if p1 and p1[0] == next_tok[0] and p2 and p2[0] == next_tok[0]:
+                        # Triple-quoted f-string
+                        self.setStyling(tok_len, self.STRING)
+                        t1 = self.next_tok()
+                        self.setStyling(t1[1], self.STRING)
+                        t2 = self.next_tok()
+                        self.setStyling(t2[1], self.STRING)
+                        in_string = True
+                        triple_string = True
+                        string_delim = next_tok[0]
+                        in_fstring = "f" in tok
+                    else:
+                        # Single-quoted f-string
+                        self.setStyling(tok_len, self.STRING)
+                        qt = self.next_tok()
+                        self.setStyling(qt[1], self.STRING)
+                        in_string = True
+                        triple_string = False
+                        string_delim = qt[0]
+                        in_fstring = "f" in tok
+                    continue
 
             if tok in ("'", '"'):
                 self.setStyling(tok_len, self.STRING)
@@ -296,19 +383,41 @@ class PyCustomLexer(NeutronLexer):
                 p2 = self.peek_tok(1)
 
                 if p1 and p1[0] == tok and p2 and p2[0] == tok:
-                    t = self.next_tok()
-                    if t is not None:
-                        self.setStyling(t[1], self.STRING)
-                    t = self.next_tok()
-                    if t is not None:
-                        self.setStyling(t[1], self.STRING)
+                    t1 = self.next_tok()
+                    self.setStyling(t1[1], self.STRING)
+                    t2 = self.next_tok()
+                    self.setStyling(t2[1], self.STRING)
                     in_string = True
                     triple_string = True
                     string_delim = tok
+                    in_fstring = False
                 else:
                     in_string = True
                     triple_string = False
                     string_delim = tok
+                    in_fstring = False
+                continue
+
+            # Decorators
+            if tok == "@":
+                self.setStyling(tok_len, self.DECORATOR)
+                name, name_index = self.skip_space_peek()
+                if name and name[0].isidentifier():
+                    for _ in range(name_index + 1):
+                        t = self.next_tok()
+                        if t is None:
+                            break
+                        if t[0].isspace():
+                            self.setStyling(t[1], self.DEFAULT)
+                        else:
+                            self.setStyling(t[1], self.DECORATOR)
+                    while self.peek_tok()[0] == ".":
+                        dot = self.next_tok()
+                        self.setStyling(dot[1], self.DECORATOR)
+                        attr = self.next_tok()
+                        if attr is None:
+                            break
+                        self.setStyling(attr[1], self.DECORATOR)
                 continue
 
             if tok == "#":
@@ -321,7 +430,6 @@ class PyCustomLexer(NeutronLexer):
                 after_name = self.peek_tok(name_index + 1) if name and name[0] else ("", 0)
                 if name[0].isidentifier() and after_name[0] in (":", "("):
                     self.setStyling(tok_len, self.KEYWORD)
-                    # Consume whitespace tokens AND the class name itself.
                     for _ in range(name_index + 1):
                         t = self.next_tok()
                         if t is None:
@@ -338,7 +446,6 @@ class PyCustomLexer(NeutronLexer):
                 name, name_index = self.skip_space_peek()
                 if name[0].isidentifier():
                     self.setStyling(tok_len, self.KEYWORD)
-                    # Consume whitespace tokens AND the function name itself.
                     for _ in range(name_index + 1):
                         t = self.next_tok()
                         if t is None:
@@ -361,11 +468,11 @@ class PyCustomLexer(NeutronLexer):
                     self.setStyling(name_len, self.FUNCTIONS)
                 else:
                     self.setStyling(name_len, self.DEFAULT)
-            elif tok.isnumeric() or tok == "self":
+            elif tok.isnumeric() or tok in ("self", "cls"):
                 self.setStyling(tok_len, self.CONSTANTS)
             elif tok in ["(", ")", "{", "}", "[", "]"]:
                 self.setStyling(tok_len, self.BRACKETS)
-            elif tok in self.builtin_names or tok in ['+', '-', '*', '/', '%', '=', '<', '>']:
+            elif tok in self.builtin_names or tok in ['+', '-', '*', '/', '%', '=', '<', '>', '!', '&', '|', '^', '~']:
                 self.setStyling(tok_len, self.TYPES)
             else:
                 self.setStyling(tok_len, self.DEFAULT)
