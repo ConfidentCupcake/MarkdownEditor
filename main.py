@@ -655,11 +655,8 @@ class MainWindow(QMainWindow):
             return
         
         target_line = line_num -1
-        
         editor.setCursorPosition(target_line, 0)
-        
         editor.ensureLineVisible(target_line)
-        
         editor.setFocus()
     
         
@@ -791,14 +788,14 @@ class MainWindow(QMainWindow):
         
 
         if self.python_editor_active:
-            self.editor = self.get_editor(path, path.suffix in {".md", ".pyw", ".py"})
+            self.editor = self.get_editor(path, path.suffix in {".md", ".pyw", ".py", "pyx", ".c", ".so"})
             self.editor.textChanged.connect(self._debounce.start)
             self.editor.verticalScrollBar().valueChanged.connect(
                 lambda: self.sync_scroll(self.editor))
             self.editor.cursorPositionChanged.connect(
                 lambda l, i: self.sync_scroll(self.editor))
         else:
-            self.editor = self.get_editor(path, path.suffix in {".md", ".pyw", ".py"})
+            self.editor = self.get_editor(path, path.suffix in {".md", ".pyw", ".py", "pyx", ".c", ".so"})
             self.editor.textChanged.connect(self._debounce.start)
             self.editor.verticalScrollBar().valueChanged.connect(
                 lambda: self.sync_scroll(self.editor))

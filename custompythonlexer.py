@@ -9,6 +9,13 @@ import builtins
 import os
 import sys
 
+try:
+    from lexer_fast import style_chunk as _cython_style
+    from lexer_fast import compute_state_before as _cython_state
+    _HAS_CYTHON = True
+except ImportError:
+    _HAS_CYTHON = False
+
 def _resource_path(relative_path):
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
@@ -51,11 +58,21 @@ class NeutronLexer(QsciLexerCustom):
         self.CLASSES = 9
         self.FUNCTION_DEF = 10
         self.DECORATOR = 11
+        # --- New styles for Cython lexer 
+        self.OPERATORS = 12
+        self.MAGIC_METHODS = 13
+        self.NUMBERS = 14
+        self.SELF_CLS = 15
+        self.BUILTINS = 16
+        self.PARAMETERS = 17
+
 
         self.default_names = [
             "default", "keyword", "types", "string", "keyargs",
             "brackets", "comments", "constants", "functions",
-            "classes", "function_def", "decorator",
+            "classes", "function_def", "decorator", 
+            "operators", "magic_methods", "numbers", 
+            "self_cls", "builtins", "parameters",
         ]
 
         self.font_weights = {
@@ -69,6 +86,7 @@ class NeutronLexer(QsciLexerCustom):
             "extrabold": getattr(QFont, 'ExtraBold', QFont.Bold),
             "black": QFont.Black,
         }
+        self._prev_state=0
 
     def _init_theme(self):
         with open(self.theme, "r", encoding="utf-8") as f:
@@ -114,6 +132,12 @@ class NeutronLexer(QsciLexerCustom):
             self.CLASSES: "CLASSES",
             self.FUNCTION_DEF: "FUNCTION_DEF",
             self.DECORATOR: "DECORATOR",
+            self.OPERATORS: "OPERATORS",
+            self.MAGIC_METHODS: "MAGIC_METHODS",
+            self.NUMBERS: "NUMBERS",
+            self.SELF_CLS: "SELF_CLS",
+            self.BUILTINS: "BUILTINS",
+            self.PARAMETERS: "PARAMETERS",
         }
         return names.get(style, "")
 
@@ -264,23 +288,69 @@ class PyCustomLexer(NeutronLexer):
             name for name, obj in vars(builtins).items()
             if isinstance(obj, (types.BuiltinFunctionType, type))
         ])
+        self._keyword_set = set(keyword.kwlist)
+        self._builtin_set = set(self.builtin_names)
         self.setDefaultPaper(QColor("#282c34"))
-
+        self._magic_set = {
+            "__init__", "__str__", "__repr__", "__len__", "__iter__",
+            "__next__", "__enter__", "__exit__", "__call__", "__getattr__",
+            "__setattr__", "__delattr__", "__getitem__", "__setitem__",
+            "__delitem__", "__contains__", "__add__", "__sub__", "__mul__",
+            "__div__", "__truediv__", "__floordiv__", "__mod__", "__pow__",
+            "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__",
+            "__hash__", "__bool__", "__new__", "__class__", "__del__",
+            "__name__", "__doc__", "__dict__", "__module__",
+        }
+        self._prev_state = 0
+        
+    
     def styleText(self, start: int, end: int) -> None:
         full_text = self.editor.text()
-
+        text_bytes = full_text.encode('utf-8')
+        
         start_char = self._byte_pos_to_char_index(full_text, start)
         end_char = self._byte_pos_to_char_index(full_text, end)
-
-        # Compute the state at the start position by re-parsing the prefix.
-        # This is O(n) but GUARANTEED CORRECT — no state caching bugs.
-        in_string, in_comment, triple_string, string_delim, in_fstring, escape_next = \
-            self._compute_state_before(full_text, start_char)
-
-        chunk = full_text[start_char:end_char]
-        self.startStyling(start)
-        self.generate_token(chunk)
-
+        
+        start_byte = len(full_text[:start_char].encode('utf-8'))
+        end_byte = len(full_text[:end_char].encode('utf-8'))
+        
+        if _HAS_CYTHON:
+            # --- Cython path (50 - 100x faster) ---
+            # Call the Cython style_chunk() function. It scans the text at C speed and returns:
+            #   final_state: packed integer state for the next call
+            #   styled_tokens: list of (byte_length, style_id) tuples
+            final_state, styled_tokens = _cython_style(
+                text_bytes,
+                start_byte,
+                end_byte,
+                self._prev_state,
+                self._keyword_set,
+                self._builtin_set,
+                self._magic_set,
+            )
+            
+            # Apply the styles to QScintilla
+            # startStyling() sets the starting byte pyosition
+            # setStyling(length, style_id) styles 'length' bytes
+            self.startStyling(start)
+            for byte_len, style_id in styled_tokens:
+                self.setStyling(byte_len, style_id)
+                
+            # Save the state for the next styleText call
+            self._prev_state = final_state
+            
+        else:
+            # --- Pure Python fallback (your existing code) ---
+            # This runs when the Cython module is not compiled.
+            # It's the same tokenization and styling that was here before
+            in_string, in_comment, triple_string, string_delim, in_fstring, escape_next = self._compute_state_before(full_text, start_char)
+            
+            chunk = full_text[start_char:end_char]
+            self.startStyling(start)
+            self.generate_token(chunk)
+            
+            
+        
         while True:
             curr_token = self.next_tok()
             if curr_token is None:

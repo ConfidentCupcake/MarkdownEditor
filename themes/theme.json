@@ -148,6 +148,78 @@
         }
       },
       {
+        "operators": {
+          "color": "#56b6c2",
+          "paper-color": "#282c34",
+          "font": {
+            "family": "sans-serif",
+            "font-size": 14,
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "magic_methods": {
+          "color": "#61afef",
+          "paper-color": "#282c34",
+          "font": {
+            "family": "sans-serif",
+            "font-size": 14,
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "numbers": {
+          "color": "#d19a66",
+          "paper-color": "#282c34",
+          "font": {
+            "family": "sans-serif",
+            "font-size": 14,
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "self_cls": {
+          "color": "#d19a66",
+          "paper-color": "#282c34",
+          "font": {
+            "family": "sans-serif",
+            "font-size": 14,
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "builtins": {
+          "color": "#61afef",
+          "paper-color": "#282c34",
+          "font": {
+            "family": "sans-serif",
+            "font-size": 14,
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "parameters": {
+          "color": "#e06c75",
+          "paper-color": "#282c34",
+          "font": {
+            "family": "sans-serif",
+            "font-size": 14,
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
         "header": {
           "color": "#e50f21",
           "paper-color": "#282c34",

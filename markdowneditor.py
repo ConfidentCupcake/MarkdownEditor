@@ -6,7 +6,7 @@ import pkgutil
 import os
 from pathlib import Path
 from markdowncustomlexer import MarkdownCustomLexer
-
+ 
 
 class MarkdownEditor(QsciScintilla):
     def __init__(self, parent=None, path: Path=None, is_python_file: bool=False):
