@@ -65,6 +65,15 @@ class NeutronLexer(QsciLexerCustom):
         self.SELF_CLS = 15
         self.BUILTINS = 16
         self.PARAMETERS = 17
+        self.CLASS_REFERENCE = 18
+        self.INSTANCE_FIELD = 19
+        self.INSTANCE_METHOD = 20
+        self.STATIC_FIELD = 21
+        self.STATIC_METHOD = 22
+        self.FUNCTION_CALL = 23
+        self.LOCAL_VARIABLE = 24
+        self.COMMA = 25
+        self.MODULE_NAME = 26
 
 
         self.default_names = [
@@ -73,6 +82,9 @@ class NeutronLexer(QsciLexerCustom):
             "classes", "function_def", "decorator", 
             "operators", "magic_methods", "numbers", 
             "self_cls", "builtins", "parameters",
+            "class_reference", "instance_field", "instance_method",
+            "static_field", "static_method", "function_call",
+            "local_variable", "comma", "module_name",
         ]
 
         self.font_weights = {
@@ -138,6 +150,15 @@ class NeutronLexer(QsciLexerCustom):
             self.SELF_CLS: "SELF_CLS",
             self.BUILTINS: "BUILTINS",
             self.PARAMETERS: "PARAMETERS",
+            self.CLASS_REFERENCE: "CLASS_REFERENCE",
+            self.INSTANCE_FIELD: "INSTANCE_FIELD",
+            self.INSTANCE_METHOD: "INSTANCE_METHOD",
+            self.STATIC_FIELD: "STATIC_FIELD",
+            self.STATIC_METHOD: "STATIC_METHOD",
+            self.FUNCTION_CALL: "FUNCTION_CALL",
+            self.LOCAL_VARIABLE: "LOCAL_VARIABLE",
+            self.COMMA: "COMMA",
+            self.MODULE_NAME: "MODULE_NAME",
         }
         return names.get(style, "")
 

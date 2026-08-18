@@ -21,6 +21,15 @@ cdef enum:
     STYLE_SELF_CLS = 15
     STYLE_BUILTINS = 16
     STYLE_PARAMETERS = 17
+    STYLE_CLASS_REFERENCE = 18
+    STYLE_INSTANCE_FIELD = 19
+    STYLE_INSTANCE_METHOD = 20
+    STYLE_STATIC_FIELD = 21
+    STYLE_STATIC_METHOD = 22
+    STYLE_FUNCTION_CALL = 23
+    STYLE_LOCAL_VARIABLE = 24
+    STYLE_COMMA = 25
+    STYLE_MODULE_NAME = 26
 
 
 # --- Character classification helpers ---
@@ -122,6 +131,8 @@ def compute_state_before(bytes text, int target_pos):
                         in_fstring = 0
                         i += 3
                         continue
+                    i += 1
+                    continue
                 i += 1
                 continue
 
@@ -129,6 +140,8 @@ def compute_state_before(bytes text, int target_pos):
                 in_string = 0
                 string_delim = 0
                 in_fstring = 0
+                i += 1
+                continue
             i += 1
             continue
 
@@ -193,16 +206,30 @@ def style_chunk(bytes text, int start, int end, int prev_state,
     cdef int i = start
     cdef int token_start
     cdef unsigned char c
-    cdef unsigned char next_c
     cdef bytes token_bytes
     cdef str token_str
+    cdef unsigned char next_c
+    
+    # Context Tracking
     cdef int after_def = 0
     cdef int after_class = 0
     cdef int after_dot = 0
     cdef int after_at = 0
     cdef int in_def_params = 0
     cdef int param_depth = 0
-    cdef int final_state
+    
+    # --- New context tracking (v2) ---
+    # prev_id_type: 0=none, 1=self/cls, 2=class_ref, 3=other identifier
+    # Preserved through whitespice only; consumed by '.'; cleared by everything else
+    cdef int prev_id_type = 0
+    # dot_owner_type: set when '.' is consumed, used for the next identifier
+    cdef int dot_owner_type = 0
+    
+    # Import context
+    cdef int after_from = 0
+    cdef int after_import = 0
+    cdef int in_from_import = 0
+    cdef bint followed_by_paren
 
     while i < end:
         c = text[i]
@@ -250,16 +277,10 @@ def style_chunk(bytes text, int start, int end, int prev_state,
                         string_delim = 0
                         in_fstring = 0
                         continue
-                    else:
-                        # FIX: Single quote inside triple string that is NOT
-                        # a closing triple quote. Style it as string and
-                        # advance by 1. Without this, the code enters an
-                        # infinite loop because the inner while loop breaks
-                        # on the quote character without advancing i.
-                        results.append((1, STYLE_STRING))
-                        i += 1
-                        continue
-                # Regular char in triple string (not a quote)
+                    results.append((1, STYLE_STRING))
+                    i += 1
+                    continue
+                token_start = i
                 while i < end:
                     c = text[i]
                     if c == 34 or c == 39 or c == 92:
@@ -270,6 +291,7 @@ def style_chunk(bytes text, int start, int end, int prev_state,
                 continue
 
             # Single-line string
+            token_start = i
             while i < end:
                 c = text[i]
                 if c == string_delim:
@@ -281,6 +303,8 @@ def style_chunk(bytes text, int start, int end, int prev_state,
                     break
                 if c == 92:
                     results.append((i - token_start, STYLE_STRING))
+                    results.append((1, STYLE_STRING))
+                    i += 1
                     escape_next = 1
                     break
                 if c == 10 or c == 13:
@@ -315,6 +339,12 @@ def style_chunk(bytes text, int start, int end, int prev_state,
             after_def = 0
             after_class = 0
             after_at = 0
+            after_dot = 0
+            prev_id_type = 0
+            dot_owner_type = 0
+            after_from = 0
+            after_import = 0
+            in_from_import = 0
             continue
 
         # String with prefix: f"...", r'...', b"..."
@@ -336,6 +366,7 @@ def style_chunk(bytes text, int start, int end, int prev_state,
                     triple_string = 0
                     string_delim = next_c
                     in_fstring = 1 if (c == 102) else 0
+                prev_id_type = 0
                 continue
 
         # Regular string
@@ -354,6 +385,7 @@ def style_chunk(bytes text, int start, int end, int prev_state,
                 triple_string = 0
                 string_delim = c
                 in_fstring = 0
+            prev_id_type = 0
             continue
 
         # Comment
@@ -364,6 +396,7 @@ def style_chunk(bytes text, int start, int end, int prev_state,
             while i < end and text[i] != 10 and text[i] != 13:
                 i += 1
             results.append((i - token_start, STYLE_COMMENTS))
+            prev_id_type = 0
             continue
 
         # Decorator
@@ -371,6 +404,7 @@ def style_chunk(bytes text, int start, int end, int prev_state,
             results.append((1, STYLE_DECORATOR))
             i += 1
             after_at = 1
+            prev_id_type = 0
             continue
 
         # Number
@@ -379,13 +413,21 @@ def style_chunk(bytes text, int start, int end, int prev_state,
             while i < end and (is_alnum(text[i]) or text[i] == 46):
                 i += 1
             results.append((i - token_start, STYLE_NUMBERS))
+            prev_id_type = 0
             continue
 
         # Dot
         if c == 46:
             results.append((1, STYLE_DEFAULT))
             i += 1
-            after_dot = 1
+            if after_from or after_import:
+                # In import context, dots are part of module paths
+                # Dont't set after_dot - keep the import context
+                pass
+            else:
+                after_dot = 1
+                dot_owner_type = prev_id_type
+            prev_id_type = 0
             continue
 
         # Brackets
@@ -395,6 +437,7 @@ def style_chunk(bytes text, int start, int end, int prev_state,
                 if after_def:
                     in_def_params = 1
                     param_depth = 1
+                    after_def = 0
                 elif in_def_params:
                     param_depth += 1
             elif c == 91 or c == 123:
@@ -411,6 +454,7 @@ def style_chunk(bytes text, int start, int end, int prev_state,
                     param_depth -= 1
             i += 1
             after_dot = 0
+            prev_id_type = 0
             continue
 
         # Operators
@@ -420,22 +464,35 @@ def style_chunk(bytes text, int start, int end, int prev_state,
             if i < end and is_operator(text[i]):
                 i += 1
             results.append((i - token_start, STYLE_OPERATORS))
+            prev_id_type = 0
             continue
 
-        # Comma, colon, semicolon
+        # Comma
         if c == 44:
-            results.append((1, STYLE_DEFAULT))
+            results.append((1, STYLE_COMMA))
             i += 1
+            # Import context survives comas
+            if not after_import and not in_from_import and not after_from:
+                prev_id_type = 0
             continue
+            
+        # Colon
         if c == 58:
             results.append((1, STYLE_DEFAULT))
             in_def_params = 0
             param_depth = 0
             i += 1
+            prev_id_type = 0
             continue
+            
+        # Semicolon
         if c == 59:
             results.append((1, STYLE_DEFAULT))
             i += 1
+            after_from = 0
+            after_import = 0
+            in_from_import = 0
+            prev_id_type = 0
             continue
 
         # ============ IDENTIFIER (word) ============
@@ -446,53 +503,154 @@ def style_chunk(bytes text, int start, int end, int prev_state,
 
             token_bytes = text[token_start:i]
             token_str = token_bytes.decode('utf-8', errors='replace')
-
+            
+            followed_by_paren = (i < end and text[i] == 40)
+            
+            # --- Style decision tree ---
             if after_at:
                 results.append((i - token_start, STYLE_DECORATOR))
                 after_at = 0
+                prev_id_type = 0
+                
             elif token_str in magic_methods:
                 results.append((i - token_start, STYLE_MAGIC_METHODS))
+                prev_id_type = 3
+                
             elif token_str in ("self", "cls"):
                 results.append((i - token_start, STYLE_SELF_CLS))
+                prev_id_type = 1
+                
             elif token_str in ("True", "False", "None"):
                 results.append((i - token_start, STYLE_CONSTANTS))
+                prev_id_type = 0
+                
             elif token_str == "def":
                 results.append((i - token_start, STYLE_KEYWORD))
                 after_def = 1
+                prev_id_type = 0
+                
             elif token_str == "class":
                 results.append((i - token_start, STYLE_KEYWORD))
                 after_class = 1
+                prev_id_type = 0
+                
+            elif token_str == "import":
+                results.append((i - token_start, STYLE_KEYWORD))
+                if after_from:
+                    after_from = 0
+                    in_from_import = 1
+                else:
+                    after_import = 1
+                prev_id_type = 0
+                
+            elif token_str == "from":
+                results.append((i - token_start, STYLE_KEYWORD))
+                after_from = 1
+                prev_id_type = 0
+                
+            elif token_str == "as":
+                results.append((i - token_start, STYLE_KEYWORD))
+                # 'as' in import: next name is alias
+                after_import = 0
+                in_from_import = 0
+                prev_id_type = 0
+                
             elif token_str in keywords:
                 results.append((i - token_start, STYLE_KEYWORD))
+                prev_id_type = 0
+                
             elif after_def:
+            # Function definition name
                 results.append((i - token_start, STYLE_FUNCTION_DEF))
-                after_def = 0
+                prev_id_type = 3
+                
             elif after_class:
+                # Class name definition
                 results.append((i - token_start, STYLE_CLASSES))
                 after_class = 0
+                prev_id_type = 2
+                
             elif after_dot:
-                if i < end and text[i] == 40:
-                    results.append((i - token_start, STYLE_FUNCTIONS))
+                # After dot - check dot_owner_type
+                if dot_owner_type == 1:
+                    # self.xxx or cls.xxx
+                    if followed_by_paren:
+                        results.append((i - token_start, STYLE_INSTANCE_METHOD))
+                    else:
+                        results.append((i - token_start, STYLE_INSTANCE_FIELD))
+                elif dot_owner_type == 2:
+                    # ClassName.xxx
+                    if followed_by_paren:
+                        results.append((i - token_start, STYLE_STATIC_METHOD))
+                    else:
+                        results.append((i - token_start, STYLE_STATIC_FIELD))
                 else:
-                    results.append((i - token_start, STYLE_DEFAULT))
+                    # obj.xxx
+                    if followed_by_paren:
+                        results.append((i - token_start, STYLE_FUNCTIONS))
+                    else:
+                        results.append((i - token_start, STYLE_DEFAULT))
                 after_dot = 0
+                dot_owner_type = 0
+                prev_id_type = 3
+            
             elif in_def_params and param_depth == 1:
+                # Parameter inside function definition
                 if i < end and text[i] == 61:
                     results.append((i - token_start, STYLE_KEYARGS))
                 else:
                     results.append((i - token_start, STYLE_PARAMETERS))
+                prev_id_type = 3
+
+            elif after_from:
+                # Module name in from-import
+                results.append((i - token_start, STYLE_MODULE_NAME))
+                prev_id_type = 0
+
+            elif after_import:
+                # Module name in standalone import
+                results.append((i - token_start, STYLE_MODULE_NAME))
+                prev_id_type = 0
+
+            elif in_from_import:
+                # Imported name from 'from X import Y'
+                if len(token_str) > 0 and token_str[0].isupper():
+                    results.append((i - token_start, STYLE_CLASS_REFERENCE))
+                    prev_id_type = 2
+                else:
+                    results.append((i - token_start, STYLE_LOCAL_VARIABLE))
+                    prev_id_type = 3
+            
             elif token_str in builtins:
-                results.append((i - token_start, STYLE_BUILTINS))
+                # Builtin function/class
+                if followed_by_paren:
+                    results.append((i - token_start, STYLE_FUNCTION_CALL))
+                else:
+                    results.append((i - token_start, STYLE_BUILTINS))
+                prev_id_type = 3
+                
             elif len(token_str) > 0 and token_str[0].isupper():
-                results.append((i - token_start, STYLE_CLASSES))
+                # Capitalized name -> class reference
+                results.append((i - token_start, STYLE_CLASS_REFERENCE))
+                prev_id_type = 2
+                
+            elif followed_by_paren:
+                # Bare function call
+                results.append((i - token_start, STYLE_FUNCTION_CALL))
+                prev_id_type = 3
+            
             else:
-                results.append((i - token_start, STYLE_DEFAULT))
+                # Local Variable
+                results.append((i - token_start, STYLE_LOCAL_VARIABLE))
+                prev_id_type = 3
+                
             continue
 
         # Unknown character
         results.append((1, STYLE_DEFAULT))
         i += 1
+        prev_id_type = 0
 
-    final_state = pack_state(in_string, in_comment, triple_string,
+    cdef int final_state = pack_state(in_string, in_comment, triple_string,
                              string_delim, in_fstring, escape_next)
     return (final_state, results)

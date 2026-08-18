@@ -17,7 +17,7 @@ from console_widget import ConsoleWidget
 from find_replace import FindReplaceBar
 import resources_rc
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 def resource_path(relative_path):
     """
