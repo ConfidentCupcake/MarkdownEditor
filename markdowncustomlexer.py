@@ -11,10 +11,10 @@ class MarkdownCustomLexer(NeutronLexer):
 
         # Stable fallback colors so unstyled regions never flash white.
         self.setDefaultColor(QColor("#abb2bf"))
-        self.setDefaultPaper(QColor("#282c34"))
+        self.setDefaultPaper(QColor("#1e1f22"))
 
         self.editor.setColor(QColor("#abb2bf"))
-        self.editor.setPaper(QColor("#282c34"))
+        self.editor.setPaper(QColor("#1e1f22"))
 
     # ------------------------------------------------------------------ #
     #  Style IDs + theme mapping

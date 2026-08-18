@@ -311,7 +311,7 @@ class PyCustomLexer(NeutronLexer):
         ])
         self._keyword_set = set(keyword.kwlist)
         self._builtin_set = set(self.builtin_names)
-        self.setDefaultPaper(QColor("#282c34"))
+        self.setDefaultPaper(QColor("#1e1f22"))
         self._magic_set = {
             "__init__", "__str__", "__repr__", "__len__", "__iter__",
             "__next__", "__enter__", "__exit__", "__call__", "__getattr__",
@@ -337,14 +337,17 @@ class PyCustomLexer(NeutronLexer):
         
         if _HAS_CYTHON:
             # --- Cython path (50 - 100x faster) ---
-            # Call the Cython style_chunk() function. It scans the text at C speed and returns:
-            #   final_state: packed integer state for the next call
-            #   styled_tokens: list of (byte_length, style_id) tuples
+            # Compute the correct lexer state at start_byte by scanning from byte 0.
+            # This is necessary because QScintilla may call styleText for non-contiguous
+            # regions (e.g., when the user scrolls). Using self._prev_state from the
+            # previous call would give the wrong state if the previous call ended at
+            # a different position.
+            prev_state = _cython_state(text_bytes, start_byte)
             final_state, styled_tokens = _cython_style(
                 text_bytes,
                 start_byte,
                 end_byte,
-                self._prev_state,
+                prev_state,
                 self._keyword_set,
                 self._builtin_set,
                 self._magic_set,

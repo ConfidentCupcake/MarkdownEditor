@@ -6,7 +6,7 @@
       {
         "default": {
           "color": "#bcbec4",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -18,7 +18,7 @@
       {
         "keyword": {
           "color": "#ff5700",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -30,7 +30,7 @@
       {
         "types": {
           "color": "#bcbec4",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -42,7 +42,7 @@
       {
         "string": {
           "color": "#00ff21",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -54,7 +54,7 @@
       {
         "keyargs": {
           "color": "#ea5a5a",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -66,7 +66,7 @@
       {
         "brackets": {
           "color": "#bcbec4",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -78,7 +78,7 @@
       {
         "comments": {
           "color": "#7a7e85",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -90,7 +90,7 @@
       {
         "constants": {
           "color": "#ff5700",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -102,7 +102,7 @@
       {
         "functions": {
           "color": "#8621ff",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -114,7 +114,7 @@
       {
         "classes": {
           "color": "#ff0000",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -126,7 +126,7 @@
       {
         "function_def": {
           "color": "#0082ff",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -138,7 +138,7 @@
       {
         "decorator": {
           "color": "#b3ae60",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -150,7 +150,7 @@
       {
         "operators": {
           "color": "#bcbec4",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -162,7 +162,7 @@
       {
         "magic_methods": {
           "color": "#0082ff",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -174,7 +174,7 @@
       {
         "numbers": {
           "color": "#11e4f6",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -186,7 +186,7 @@
       {
         "self_cls": {
           "color": "#94558d",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -198,7 +198,7 @@
       {
         "builtins": {
           "color": "#8621ff",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -210,7 +210,7 @@
       {
         "parameters": {
           "color": "#ea5a5a",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -222,7 +222,7 @@
       {
         "class_reference": {
           "color": "#bcbec4",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -234,7 +234,7 @@
       {
         "instance_field": {
           "color": "#8621ff",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -246,7 +246,7 @@
       {
         "instance_method": {
           "color": "#8621ff",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -258,7 +258,7 @@
       {
         "static_field": {
           "color": "#ff00db",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -270,7 +270,7 @@
       {
         "static_method": {
           "color": "#41a5ff",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -282,7 +282,7 @@
       {
         "function_call": {
           "color": "#8621ff",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -294,7 +294,7 @@
       {
         "local_variable": {
           "color": "#46b2ff",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -306,7 +306,7 @@
       {
         "comma": {
           "color": "#ff8000",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -318,7 +318,7 @@
       {
         "module_name": {
           "color": "#bcbec4",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 13,
@@ -330,7 +330,7 @@
       {
         "header": {
           "color": "#e50f21",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -342,7 +342,7 @@
       {
         "setext_header": {
           "color": "#e50f21",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -354,7 +354,7 @@
       {
         "hrule": {
           "color": "#3e69ba",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -366,7 +366,7 @@
       {
         "blockquote": {
           "color": "#d60ef9",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -378,7 +378,7 @@
       {
         "list_marker": {
           "color": "#3e69ba",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -390,7 +390,7 @@
       {
         "ordered_list_marker": {
           "color": "#3e69ba",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -402,7 +402,7 @@
       {
         "task_marker": {
           "color": "#3e69ba",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -414,7 +414,7 @@
       {
         "bold": {
           "color": "#f9d60e",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -426,7 +426,7 @@
       {
         "italic": {
           "color": "#c678dd",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -438,7 +438,7 @@
       {
         "bold_italic": {
           "color": "#f9d60e",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -450,7 +450,7 @@
       {
         "strikethrough": {
           "color": "#f9d50a",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -462,7 +462,7 @@
       {
         "inline_code": {
           "color": "#0ef9d6",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "Consolas",
             "font-size": 14,
@@ -474,7 +474,7 @@
       {
         "code_fence": {
           "color": "#1eae0a",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "Consolas",
             "font-size": 14,
@@ -486,7 +486,7 @@
       {
         "code_block": {
           "color": "#c69b8d",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "Consolas",
             "font-size": 14,
@@ -498,7 +498,7 @@
       {
         "code_language": {
           "color": "#1eae0a",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "Consolas",
             "font-size": 14,
@@ -510,7 +510,7 @@
       {
         "link_text": {
           "color": "#087ad7",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -522,7 +522,7 @@
       {
         "link_url": {
           "color": "#087ad7",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -534,7 +534,7 @@
       {
         "link_title": {
           "color": "#c678aa",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -546,7 +546,7 @@
       {
         "reference_id": {
           "color": "#087ad7",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -558,7 +558,7 @@
       {
         "link_definition": {
           "color": "#087ad7",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -570,7 +570,7 @@
       {
         "autolink": {
           "color": "#087ad7",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -582,7 +582,7 @@
       {
         "image_marker": {
           "color": "#087ad7",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -594,7 +594,7 @@
       {
         "table_pipe": {
           "color": "#3e69ba",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "Consolas",
             "font-size": 14,
@@ -606,7 +606,7 @@
       {
         "table_separator": {
           "color": "#3e69ba",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "Consolas",
             "font-size": 14,
@@ -618,7 +618,7 @@
       {
         "table_text": {
           "color": "#dcdfe4",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -630,7 +630,7 @@
       {
         "html": {
           "color": "#c69b8d",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "Consolas",
             "font-size": 14,
@@ -642,7 +642,7 @@
       {
         "escape": {
           "color": "#0ef9d6",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "Consolas",
             "font-size": 14,
@@ -654,7 +654,7 @@
       {
         "entity": {
           "color": "#c678aa",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -666,7 +666,7 @@
       {
         "footnote_marker": {
           "color": "#087ad7",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -678,7 +678,7 @@
       {
         "footnote_text": {
           "color": "#dcdfe4",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -690,7 +690,7 @@
       {
         "alert": {
           "color": "#d60ef9",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -702,7 +702,7 @@
       {
         "mention": {
           "color": "#087ad7",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -714,7 +714,7 @@
       {
         "issue_ref": {
           "color": "#e50f21",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,
@@ -726,7 +726,7 @@
       {
         "emoji": {
           "color": "#f9d60e",
-          "paper-color": "#282c34",
+          "paper-color": "#1e1f22",
           "font": {
             "family": "sans-serif",
             "font-size": 14,

@@ -77,10 +77,10 @@ class MainWindow(QMainWindow):
         )
         self._preview_css = """
            body { font-family: sans-serif; max-width: 800px; margin: 2em auto 0;
-                  padding: 0 1em 4em; background:#282c34; color:#dcdfe4; }
+                  padding: 0 1em 4em; background:#1e1f22; color:#dcdfe4; }
            h1,h2 { border-bottom:1px solid #444; padding-bottom:.3em; }
-           code { background:#282c34; padding:2px 5px; border-radius:3px; }
-           pre { background:#282c34; padding:1em; border-radius:6px; overflow-x:auto; }
+           code { background:#1e1f22; padding:2px 5px; border-radius:3px; }
+           pre { background:#1e1f22; padding:1em; border-radius:6px; overflow-x:auto; }
            """
         self.init_ui()
         if hasattr(sys, '_MEIPASS'):
@@ -114,9 +114,9 @@ class MainWindow(QMainWindow):
             print(f"STYLESHEET ERROR: {e}")
             # Fallback: apply basic dark styling inline
             self.setStyleSheet("""
-                QMainWindow { background-color: #282c34; color: #d3d3d3; }
+                QMainWindow { background-color: #1e1f22; color: #d3d3d3; }
                 QMenuBar { background-color: #2d2d2d; color: floralwhite; }
-                QTabWidget { background-color: #282c34; color: #d3d3d3; }
+                QTabWidget { background-color: #1e1f22; color: #d3d3d3; }
             """)
 
         self.set_up_menu()
@@ -835,7 +835,7 @@ class MainWindow(QMainWindow):
         frame.setContentsMargins(0,0,0,0)
         frame.setStyleSheet('''
             QFrame {
-                background-color: #282c34;
+                background-color: #1e1f22;
                 border-radius: 0px;
                 border: none;
                 padding: 5px;
@@ -881,7 +881,7 @@ class MainWindow(QMainWindow):
         self.side_bar.setFrameShape(QFrame.Shape.StyledPanel)
         self.side_bar.setFrameShadow(QFrame.Shadow.Plain)
         self.side_bar.setStyleSheet(f'''
-            background-color: {"#282c34"};
+            background-color: {"#1e1f22"};
         ''')
 
         side_bar_layout = QVBoxLayout()

@@ -63,7 +63,7 @@ class MarkdownEditor(QsciScintilla):
         self.setMarginType(0, QsciScintilla.NumberMargin)
         self.setMarginWidth(0, "000")
         self.setMarginsForegroundColor(QColor('#ff888888'))
-        self.setMarginsBackgroundColor(QColor('#282c34'))
+        self.setMarginsBackgroundColor(QColor('#1e1f22'))
         self.setMarginsFont(self.window_font)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setWrapMode(QsciScintilla.WrapNone)

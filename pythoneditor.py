@@ -61,7 +61,7 @@ class PythonEditor(QsciScintilla):
 
             self.setLexer(self.py_lexer)
         else:
-            self.setPaper(QColor("#282c34"))
+            self.setPaper(QColor("#1e1f22"))
             self.setColor(QColor("#abb2bf"))
 
         self.definition_finder = DefinitionFinder()
@@ -72,7 +72,7 @@ class PythonEditor(QsciScintilla):
         self.setMarginType(0, QsciScintilla.NumberMargin)
         self.setMarginWidth(0, "0000")
         self.setMarginsForegroundColor(QColor('#ff888888'))
-        self.setMarginsBackgroundColor(QColor('#282c34'))
+        self.setMarginsBackgroundColor(QColor('#1e1f22'))
         self.setMarginsFont(self.window_font)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setWrapMode(QsciScintilla.WrapNone)
