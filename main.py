@@ -16,9 +16,10 @@ from python_runner import PythonRunner
 from console_widget import ConsoleWidget
 from find_replace import FindReplaceBar
 from terminal_widget import TerminalWidget
+from split_editor import SplitEditor
 import resources_rc
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 
 def resource_path(relative_path):
     """
@@ -38,6 +39,8 @@ def resource_path(relative_path):
     return os.path.join(os.path.abspath("."), relative_path)
 
 class MainWindow(QMainWindow):
+    WIDTH = 1400
+    HEIGHT = 900
     def __init__(self):
         super().__init__()
         self._dirty_tabs = set() # set of tab indices that have unsaved changes
@@ -100,7 +103,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Code Editor")
         self.setWindowIcon(QIcon(resource_path("icons/app-icon-256.png")))
-        self.resize(1400, 900)
+        self.resize(self.WIDTH, self.HEIGHT)
         self.window_font = QFont("sans-serif")
         self.window_font.setPointSize(13)
         self.setFont(self.window_font)
@@ -431,6 +434,18 @@ class MainWindow(QMainWindow):
         toggle_terminal_action.setShortcut("Ctrl+Shift+T")
         toggle_terminal_action.setShortcutContext(Qt.ApplicationShortcut)
         toggle_terminal_action.triggered.connect(self._toggle_terminal)
+        
+        view_menu.addSeparator()
+        
+        fullscreen_editor = view_menu.addAction("Fullscreen")
+        fullscreen_editor.setShortcut("F11")
+        fullscreen_editor.setShortcutContext(Qt.ApplicationShortcut)
+        fullscreen_editor.triggered.connect(self._show_full_screen)
+        
+        starting_window_size = view_menu.addAction("Startup Window Size")
+        starting_window_size.setShortcut("Shift+F11")
+        starting_window_size.setShortcutContext(Qt.ApplicationShortcut)
+        starting_window_size.triggered.connect(self._startup_window_size)
 
         help_menu = menu_bar.addMenu("Help")
 
@@ -570,7 +585,15 @@ class MainWindow(QMainWindow):
         """Persist the recent files list to QSettings."""
         self.settings.setValue("recent_files", self.recent_files)
         
+    def _show_full_screen(self):
+        self.setWindowState(Qt.WindowState.WindowMaximized)
+        self.show()
     
+    def _startup_window_size(self):
+        self.setWindowState(Qt.WindowState.WindowNoState)
+        self.resize(self.WIDTH, self.HEIGHT)
+        self.show()
+
     def toggle_comment(self):
         """Toggle # comment on the current line or selected lines."""
         editor = self.tab_view.currentWidget()
