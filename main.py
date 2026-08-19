@@ -15,9 +15,10 @@ from fuzzy_searcher import SearchItem, SearchWorker
 from python_runner import PythonRunner
 from console_widget import ConsoleWidget
 from find_replace import FindReplaceBar
+from terminal_widget import TerminalWidget
 import resources_rc
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.6.0"
 
 def resource_path(relative_path):
     """
@@ -217,6 +218,16 @@ class MainWindow(QMainWindow):
         
         dock.hide()
         self.console_dock = dock
+        
+        # Terminal (new)
+        self.terminal = TerminalWidget(self)
+        terminal_dock = QDockWidget("Terminal", self)
+        terminal_dock.setWidget(self.terminal)
+        terminal_dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
+        self.addDockWidget(Qt.BottomDockWidgetArea, terminal_dock)
+        
+        terminal_dock.hide()
+        self.terminal_dock = terminal_dock
     
     def get_sidebar_label(self, path, name):
         label = QLabel(self)
@@ -412,14 +423,26 @@ class MainWindow(QMainWindow):
         toggle_preview_action.triggered.connect(self.toggle_preview)
 
         toggle_console_action = view_menu.addAction("Toggle Console")
-        toggle_console_action.setShortcut("Ctrl+`")
+        toggle_console_action.setShortcut("Ctrl+Shift+-")
         toggle_console_action.setShortcutContext(Qt.ApplicationShortcut)
         toggle_console_action.triggered.connect(self.toggle_console)
+        
+        toggle_terminal_action = view_menu.addAction("Toggle Terminal")
+        toggle_terminal_action.setShortcut("Ctrl+Shift+T")
+        toggle_terminal_action.setShortcutContext(Qt.ApplicationShortcut)
+        toggle_terminal_action.triggered.connect(self._toggle_terminal)
 
         help_menu = menu_bar.addMenu("Help")
 
         check_updates_action = help_menu.addAction("Check for Updates")
         check_updates_action.triggered.connect(self.check_for_updates)
+        
+    def _toggle_terminal(self):
+        """Show or hide the terminal dock"""
+        if self.terminal_dock.isVisible():
+            self.terminal_dock.hide()
+        else:
+            self.terminal_dock.show()
 
     def _trigger_goto_definition(self):
         editor = self.tab_view.currentWidget()
@@ -1530,6 +1553,38 @@ class MainWindow(QMainWindow):
             found = editor.findNext()
         
         self.statusBar().showMessage(f"Replace {count} occurrences", 3000)
+        
+    def closeEvent(self, event):
+        # Check for unsaved tabs
+        for i in range(self.tab_view.count()):
+            if i in self._dirty_tabs:
+                title = self.tab_view.tabText(i)
+                if title.startswith("● "):
+                    title = title[2:]
+                reply = QMessageBox.question(
+                    self, "Unsaved Changes",
+                    f"'{title}' has unsaved changes. Close anyway?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    event.ignore()
+                    return
+        
+        # Stop the terminal process
+        if hasattr(self, 'terminal'):
+            self.terminal.stop()
+        
+        # Stop the Python runner process
+        if hasattr(self, "python_runner") and self.python_runner:
+            self.python_runner.stop()
+            
+        # Save settings
+        if hasattr(self, "settings"):
+            self.settings.setValue("recent_files", self.recent_files)
+        
+        event.accept()
+    
     def check_for_updates(self):
         """
         Check GitHub Releases API for a newer version.
@@ -1606,6 +1661,8 @@ class MainWindow(QMainWindow):
             # Docs: https://docs.python.org/3/library/webbrowser.html#webbrowser.open
             import webbrowser
             webbrowser.open(download_url)
+    
+    
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
