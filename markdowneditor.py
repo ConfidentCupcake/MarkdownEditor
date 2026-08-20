@@ -12,6 +12,8 @@ class MarkdownEditor(QsciScintilla):
     def __init__(self, parent=None, path: Path=None, is_python_file: bool=False):
         super(MarkdownEditor, self).__init__(parent)
         self.path = path
+        self._loading_text = False
+        self._shutting_down = False
         self.full_path = self.path.absolute() if self.path else None
         self.is_python_file = is_python_file
         self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -74,5 +76,22 @@ class MarkdownEditor(QsciScintilla):
             self.autoCompleteFromAll()
         else:
             return super().keyPressEvent(e)
+            
+    def setTextSafely(self, text:str):
+        self._loading_text = True
+        try:
+            self.blockSignals(True)
+            self.setText(text)
+            self.setModified(False)
+        finally:
+            self.blockSignals(False)
+            self._loading_text(False)
+            
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.focused.emit(self)
+        
+    def shutdown(self):
+        self._shutting_down = True
 
 

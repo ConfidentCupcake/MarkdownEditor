@@ -10,6 +10,7 @@ from definition_finder import DefinitionFinder
 
 class PythonEditor(QsciScintilla):
     goto_definition_requested = pyqtSignal(str, int, int)
+    focused = pyqtSignal(object)
     def __init__(self, parent=None, path: Path = None, is_python_file: bool = True):
         super(PythonEditor, self).__init__(parent)
         self.path = path
@@ -90,7 +91,11 @@ class PythonEditor(QsciScintilla):
 
         file_path = str(self.full_path) if self.full_path else None
         self.definition_finder.find(line, index, text, file_path)
-
+    
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.focused.emit(self)
+    
     def _on_definition_found(self, module_path: str, line: int, column: int):
         """Called when Jedi finds a definition location."""
         if self._shutting_down:
@@ -141,6 +146,7 @@ class PythonEditor(QsciScintilla):
         try:
             self.blockSignals(True)
             self.setText(text)
+            self.setModified(False)
         finally:
             self.blockSignals(False)
             self._loading_text = False

@@ -16,7 +16,7 @@ from python_runner import PythonRunner
 from console_widget import ConsoleWidget
 from find_replace import FindReplaceBar
 from terminal_widget import TerminalWidget
-from split_editor import SplitEditor
+from multi_tab_view import MultiTabView
 import resources_rc
 
 APP_VERSION = "1.7.0"
@@ -43,7 +43,7 @@ class MainWindow(QMainWindow):
     HEIGHT = 900
     def __init__(self):
         super().__init__()
-        self._dirty_tabs = set() # set of tab indices that have unsaved changes
+        self._dirty_editors = set()
         self.python_runner = PythonRunner(self)
         self.settings = QSettings("CodeEditor", "CodeEditor")
         # Load the saved recent files list, default to empty list
@@ -93,7 +93,6 @@ class MainWindow(QMainWindow):
             home = os.path.expanduser("~")
             self.file_manager.model.setRootPath(home)
             self.file_manager.setRootIndex(self.file_manager.model.index(home))
-
 
     def init_ui(self):
         self._debounce = QTimer(self)
@@ -162,7 +161,7 @@ class MainWindow(QMainWindow):
 
     def update_word_count(self):
         """Update the word/character count in the status bar."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
 
         # Only show word count for Markdown files
         if editor is None or not isinstance(editor, MarkdownEditor):
@@ -179,27 +178,40 @@ class MainWindow(QMainWindow):
 
         self.word_count_label.setText(f"Words: {words} | Chars: {chars}")
 
-    def _on_editor_text_changed(self):
-        """Called when the current editor's text changes. Marks the tab as dirty."""
-        index = self.tab_view.currentIndex()
-        if index < 0:
+    def _on_editor_text_changed(self, editor):
+        """Mark the specific editor that emitted textChanged as dirty."""
+        if editor is None:
+            return 
+            
+        if getattr(editor, "_loading_text", False):
             return
-
-        # Only mark dirty if this is a real change (not loading the file)
-        editor = self.tab_view.currentWidget()
-        if editor is not None and getattr(editor, "_loading_text", False):
+        
+        self._dirty_editors.add(editor)
+        
+        path = getattr(editor, "path", None)
+        base_title = path.name if path is not None else "Untitled"
+        
+        self.tab_view.set_editor_title(editor, f"● {base_title}")
+        
+        if editor is self.current_editor():
+            self.update_word_count()
+            
+            if isinstance(editor, MarkdownEditor):
+                self._debounce.start()
+                
+    def mark_editor_clean(self, editor):
+        """Remove dirty state after a sucessfull save."""
+        if editor is None:
             return
-
-        # _loading_text is set to True during setTextSafely()
-        # so we don't mark the tab dirty when loading a file
-
-        self._dirty_tabs.add(index)
-
-        # Add the dot indicator if not already there
-        title = self.tab_view.tabText(index)
-        if not title.startswith("● "):
-            self.tab_view.setTabText(index, f"● {title}")
-
+            
+        self._dirty_editors.discard(editor)
+        editor.setModified(False)
+        
+        path = getattr(editor, "path", None)
+        title = path.name if path is not None else "Untitled"
+        
+        self.tab_view.set_editor_title(editor, title)
+        
     def update_cursor_position(self, line: int, index: int):
         """
         Update the Ln/Col display in the status bar.
@@ -247,6 +259,32 @@ class MainWindow(QMainWindow):
             self.editor = MarkdownEditor(path=path, is_python_file=is_python_file)
         return self.editor
 
+    def current_editor(self):
+        """Return the editor focused in the active tab group."""
+        return self.tab_view.current_editor()
+    
+    def _connect_editor(self, editor):
+        """Connect all MainWindow signals required by an editor."""
+        editor.textChanged.connect(lambda ed=editor:self._on_editor_text_changed(ed))
+
+        editor.textChanged.connect(self._debounce.start)
+        editor.textChanged.connect(self.update_word_count)
+
+        editor.cursorPositionChanged.connect(lambda line, column, ed=editor: self._on_editor_cursor_changed(ed, line, column))
+        editor.cursorPositionChanged.connect(lambda line, column, ed=editor: self.sync_scroll(ed))
+
+        editor.verticalScrollBar().valueChanged.connect(lambda value, ed=editor: self.sync_scroll(ed))
+
+        if isinstance(editor, PythonEditor):
+            editor.goto_definition_requested.connect(self._open_file_at_position)
+        
+    def _on_editor_cursor_changed(self, editor, line:int, column:int):
+        """Update the status bar only for the focused editor."""
+        if editor is not self.current_editor():
+            return
+        self.update_cursor_position(line, column)
+        
+    
     def set_up_menu(self):
         menu_bar = self.menuBar()
 
@@ -413,8 +451,9 @@ class MainWindow(QMainWindow):
         interpreter_action.triggered.connect(self.choose_interpreter)
 
         # Viewmenu for toggling the Sidebar
-        view_menu = menu_bar.addMenu("View")
-
+        
+        view_menu = self.menuBar().addMenu("View")
+        
         toggle_sidebar_action = view_menu.addAction("Toggle Sidebar")
         toggle_sidebar_action.setShortcut("Ctrl+B")
         toggle_sidebar_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -437,6 +476,16 @@ class MainWindow(QMainWindow):
         
         view_menu.addSeparator()
         
+        split_right_action = view_menu.addAction("Split Right")
+        split_right_action.setShortcut("Ctrl+Alt+Right")
+        split_right_action.setShortcutContext(Qt.ApplicationShortcut)
+        split_right_action.triggered.connect(self.split_current_editor_right)
+        
+        unsplit_action = view_menu.addAction("Unsplit")
+        unsplit_action.setShortcut("Ctrl+Alt+Left")
+        unsplit_action.setShortcutContext(Qt.ApplicationShortcut)
+        unsplit_action.triggered.connect(self.unsplit_active_group)
+        
         fullscreen_editor = view_menu.addAction("Fullscreen")
         fullscreen_editor.setShortcut("F11")
         fullscreen_editor.setShortcutContext(Qt.ApplicationShortcut)
@@ -451,7 +500,21 @@ class MainWindow(QMainWindow):
 
         check_updates_action = help_menu.addAction("Check for Updates")
         check_updates_action.triggered.connect(self.check_for_updates)
+    
+    def split_current_editor_right(self):
+        editor = self.current_editor()
         
+        if editor is None:
+            return
+        
+        self.tab_view.split_right(editor)
+        
+    def unsplit_active_group(self):
+        self.tab_view.unsplit_active_group()
+        
+        
+    
+    
     def _toggle_terminal(self):
         """Show or hide the terminal dock"""
         if self.terminal_dock.isVisible():
@@ -460,22 +523,22 @@ class MainWindow(QMainWindow):
             self.terminal_dock.show()
 
     def _trigger_goto_definition(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if isinstance(editor, PythonEditor):
             editor.goto_definition()
 
     def _open_file_at_position(self, file_path: str, line: int, column: int):
         """Open a file and jump to a specific line/column."""
-        self.set_new_tab(Path(file_path))
-        editor = self.tab_view.currentWidget()
-        if editor is not None:
-            editor.setCursorPosition(line, column)
-            editor.ensureLineVisible(line)
-            editor.setFocus()
+        editor = self.set_new_tab(Path(file_path))
+        if editor is None:
+            return
+        editor.setCursorPosition(line, column)
+        editor.ensureLineVisible(line)
+        editor.setFocus()
 
     def run_with_arguments(self):
         """Save the current file, ask for arguments, then run it."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
 
@@ -509,55 +572,54 @@ class MainWindow(QMainWindow):
 
 
     def save_all(self):
-        """Save all open tabs that have a file path."""
         saved_count = 0
+        original_editor = self.current_editor()
 
-        # Save the currently active tab index so we can restore it
-        current_index = self.tab_view.currentIndex()
-        
-        for i in range(self.tab_view.count()):
-            # Set each tab as the current widget temporarily
-            # so save_file() operates on it
-            self.tab_view.setCurrentIndex(i)
-            
-            editor = self.tab_view.widget(i)
-            if editor is None:
-                continue
-            
+        for editor in list(self.tab_view.all_editors()):
             path = getattr(editor, "path", None)
-            if path is not None:
-                # This tab has a file path - save it
-                # We call the save logic directly instead of self.save_file()
-                # to avoid status bar spam from each individual save
-                path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
 
-                # Remove dirty indicator
-                self._dirty_tabs.discard(i)
-                title = self.tab_view.tabText(i)
-                if title.startswith("● "):
-                    self.tab_view.setTabText(i, title[2:])
-                    
-                saved_count += 1
+            if path is None:
+                continue
 
-        # Restore the originally active tab
-        self.tab_view.setCurrentIndex(current_index)
+            try:
+                path.write_bytes(
+                    editor.text()
+                    .replace("\r\n", "\n")
+                    .encode("utf-8")
+                )
+            except OSError as error:
+                QMessageBox.warning(
+                    self,
+                    "Save All",
+                    f"Could not save {path}:\n{error}",
+                )
+                continue
 
-        self.statusBar().showMessage(f"Saved {saved_count} file(s)", 3000)
-    
+            self.mark_editor_clean(editor)
+            saved_count += 1
+
+        if original_editor is not None:
+            self.tab_view.focus_editor(original_editor)
+
+        self.statusBar().showMessage(
+            f"Saved {saved_count} file(s)",
+            3000,
+        )
+
     def _update_recent_menu(self):
         """Rebuild the 'Open Recent' submenu from the recent_files list."""
         self.recent_menu.clear()
-        
+
         if not self.recent_files:
             empty_action = self.recent_menu.addAction("(No recent files)")
             empty_action.setEnabled(False)
             return
-        
+
         for path in self.recent_files:
             action = self.recent_menu.addAction(Path(path).name)
             action.setData(path)
             action.triggered.connect(lambda checked, p=path: self.open_recent_file(p))
-     
+
     def open_recent_file(self, path: str):
         """Open a file from the recent files list."""
         file_path = Path(path)
@@ -568,27 +630,27 @@ class MainWindow(QMainWindow):
             self._update_recent_menu()
             return
         self.set_new_tab(file_path)
-        
+
     def _add_to_recent_files(self, path: str):
         """Add a file path to the recent files list (max 10)."""
         path = str(path)
-        
+
         if path in self.recent_files:
             self.recent_files.remove(path)
-            
+
         self.recent_files.insert(0, path)
         self.recent_files = self.recent_files[:10]
         self._save_recent_files()
         self._update_recent_menu()
-        
+
     def _save_recent_files(self):
         """Persist the recent files list to QSettings."""
         self.settings.setValue("recent_files", self.recent_files)
-        
+
     def _show_full_screen(self):
         self.setWindowState(Qt.WindowState.WindowMaximized)
         self.show()
-    
+
     def _startup_window_size(self):
         self.setWindowState(Qt.WindowState.WindowNoState)
         self.resize(self.WIDTH, self.HEIGHT)
@@ -596,7 +658,7 @@ class MainWindow(QMainWindow):
 
     def toggle_comment(self):
         """Toggle # comment on the current line or selected lines."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
         
@@ -676,7 +738,7 @@ class MainWindow(QMainWindow):
     
     def goto_line(self):
         """Open a dialog to jump to a specific line number."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
         
@@ -704,8 +766,6 @@ class MainWindow(QMainWindow):
         editor.setCursorPosition(target_line, 0)
         editor.ensureLineVisible(target_line)
         editor.setFocus()
-    
-        
     
     def toggle_sidebar(self):
         """Hide/show the sidebar (side_bar + side_panel)."""
@@ -744,7 +804,7 @@ class MainWindow(QMainWindow):
 
     def run_current_file(self):
         """Save and run the current Python file"""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
 
@@ -767,7 +827,7 @@ class MainWindow(QMainWindow):
 
     def run_selection(self):
         """Run just the selected text in the current editor."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
 
@@ -819,60 +879,62 @@ class MainWindow(QMainWindow):
         with open(path, 'rb') as f:
             return b'\0' in f.read(1024)
 
-    def set_new_tab(self, path: Path, is_new_file=False):
-        if not is_new_file:
-            if not path.is_file():
-                return
-            if self.is_binary(path):
-                self.statusBar().showMessage("Cannot Open Binary File", 2000)
-                return
-            for i in range(self.tab_view.count()):
-                editor = self.tab_view.widget(i)
-                if getattr(editor, "path", None) == path:
-                    self.tab_view.setCurrentIndex(i)
-                    return
-        
-
-        if self.python_editor_active:
-            self.editor = self.get_editor(path, path.suffix in {".md", ".pyw", ".py", "pyx", ".c", ".so"})
-            self.editor.textChanged.connect(self._debounce.start)
-            self.editor.verticalScrollBar().valueChanged.connect(
-                lambda: self.sync_scroll(self.editor))
-            self.editor.cursorPositionChanged.connect(
-                lambda l, i: self.sync_scroll(self.editor))
-        else:
-            self.editor = self.get_editor(path, path.suffix in {".md", ".pyw", ".py", "pyx", ".c", ".so"})
-            self.editor.textChanged.connect(self._debounce.start)
-            self.editor.verticalScrollBar().valueChanged.connect(
-                lambda: self.sync_scroll(self.editor))
-            self.editor.cursorPositionChanged.connect(
-                lambda l, i: self.sync_scroll(self.editor))
-        
-        self.editor.cursorPositionChanged.connect(self.update_cursor_position)
-        self.editor.textChanged.connect(self._on_editor_text_changed)
-        self.editor.textChanged.connect(self.update_word_count)
-        if isinstance(self.editor, PythonEditor):
-            self.editor.goto_definition_requested.connect(self._open_file_at_position)
-
+    def set_new_tab(self, path: Path, is_new_file=False, target_group=None):
+        path = Path(path) if path is not None else None
         
         if is_new_file:
-            self.tab_view.addTab(self.editor, "untitled")
-            self.setWindowTitle("Untitled")
-            self.statusBar().showMessage("Opened untitled", 2000)
-            self.current_file = None
+            return self.new_file(target_group = target_group)
+            
+        if path is None or not path.is_file():
+            return None
+        
+        if self.is_binary(path):
+            self.statusBar().showMessage(
+                "Cannot Open Binary File",
+                2000,
+            )
+            return None
+        
+        existing = self.tab_view.find_editor_by_path(path)
+        
+        if existing is not None:
+            self.tab_view.focus_editor(existing)
+            return existing
+            
+        is_python_file = path.suffix.lower() in {".py", ".pyw", ".pyx", "pyi", ".c"}
+        
+        if self.python_editor_active:
+            editor = PythonEditor(path=path, is_python_file=is_python_file)
         else:
+            editor = MarkdownEditor(path=path, is_python_file=False)
+            
+        try:
             text = path.read_text(encoding="utf-8")
-            if hasattr(self.editor, "setTextSafely"):
-                self.editor.setTextSafely(text)
-            else:
-                self.editor.blockSignals(True)
-                self.editor.setText(text)
-                self.editor.blockSignals(False)
-            self.tab_view.addTab(self.editor, path.name)
-            self.current_file = path
-            # Add to recent files
-            self._add_to_recent_files(str(path))
-
+        except UnicodeDecodeError:
+            text = path.read_text(
+                encoding = "utf-8",
+                errors="replace",
+            )
+        except OSError as error:
+            QMessageBox.critical(
+                self,
+                "Open File",
+                f"Could not open{path}:\n{error}",
+            )
+            editor.deleteLater()
+            return None
+        
+        editor.setTextSafely(text)
+        self._connect_editor(editor)
+        
+        self.tab_view.add_editor(editor, path.name, target_group)
+        self.tab_view.set_editor_tooltip(editor, str(path.absolute()))
+        
+        self.current_file=path
+        self._add_to_recent_files(str(path))
+        
+        return editor
+        
 
     def get_frame(self) -> QFrame:
         frame = QFrame()
@@ -908,21 +970,22 @@ class MainWindow(QMainWindow):
         body.setSpacing(0)
         body_frame.setLayout(body)
 
-        self.tab_view = QTabWidget()
-        self.tab_view.setContentsMargins(0, 0, 0, 0)
-        self.tab_view.setTabsClosable(True)
-        self.tab_view.setMovable(True)
-        self.tab_view.setDocumentMode(True)
-        self.tab_view.tabCloseRequested.connect(self.close_tab)
-        self.tab_view.currentChanged.connect(self.on_tab_changed)
-        self.tab_view.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.tab_view.customContextMenuRequested.connect(self._show_tab_context_menu)
+        self.tab_view = MultiTabView(self)
+        self.tab_view.setContentsMargins(0,0,0,0)
+        self.tab_view.currentEditorChanged.connect(
+            self._on_current_editor_changed
+        )
+        self.tab_view.closeEditorRequested.connect(
+            self.close_editor
+        )
+
         
         #editor_container = QWidget()
         #editor_layout = QStackedWidget(editor_container)
 
         self.preview =QWebEngineView()
-
+        
+        # --- Setup for the Sidebar
         self.side_bar = QFrame()
         self.side_bar.setFrameShape(QFrame.Shape.StyledPanel)
         self.side_bar.setFrameShadow(QFrame.Shadow.Plain)
@@ -935,7 +998,7 @@ class MainWindow(QMainWindow):
         side_bar_layout.setSpacing(0)
         side_bar_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignCenter)
 
-        # setup labels
+        # --- Setup for labels
         self.sidebar_labels = {}
 
         folder_label = self.get_sidebar_label(resource_path("icons/folder.png"), "folder")
@@ -950,7 +1013,7 @@ class MainWindow(QMainWindow):
         # split view
         self.hs_split = QSplitter(Qt.Orientation.Horizontal)
 
-        # frame and layout to hold the tree view (file Manager)
+        # --- Frame and layout to hold the tree view (FILE MANAGER)
         self.file_manager_frame = self.get_frame()
 
         self.file_manager_layout = QVBoxLayout()
@@ -1157,38 +1220,41 @@ class MainWindow(QMainWindow):
             self.search_list_view.addItem(i)
 
     def search_list_view_clicked(self, item: SearchItem):
-        self.set_new_tab(Path(item.full_path))
-        editor = self.tab_view.currentWidget()
+        editor = self.set_new_tab(Path(item.full_path))
+        if editor is None:
+            return
         editor.setCursorPosition(item.lineno, item.end)
         editor.setFocus()
 
-    def close_tab(self, index):
-        # Check for unsaved changes
-        if index in self._dirty_tabs:
-            # QMessageBox.question shows a Yes/No dialog
-            # Docs: https://doc.qt.io/qt-5/qmessagebox.html#question
-            title = self.tab_view.tabText(index)
-            if title.startswith("● "):
-                title = title[2:]
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                f"'{title}' has unsaved changes. Close Anyway?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No  # default button
-            )
-            if reply == QMessageBox.No:
-                return
-
-        widget = self.tab_view.widget(index)
-        if isinstance(widget, PythonEditor):
-            widget.shutdown()
-
-        self._dirty_tabs.discard(index)
-        # Reindex remaining dirty tabs (indices shift after removal)
-        self._dirty_tabs = {i if i < index else i - 1 for i in self._dirty_tabs}
-
-        self.tab_view.removeTab(index)
+    def close_editor(self, editor):
+        if editor is None:
+            return 
+            
+        if editor in self._dirty_editors:
+            path =  getattr(editor, "path", None)
+            name = path.name if path is not None else "Untitled"
+            
+            reply = QMessageBox.question(self, "Unsaved Changes", f"Save Changes to '{name}'?", QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save)
+            
+            if reply == QMessageBox.Cancel:
+                return False
+                
+            if reply == QMessageBox.Save:
+                self.tab_view.focus_editor(editor)
+                if not self.save_file():
+                    return False
+                        
+        self._dirty_editors.discard(editor)
+        self.tab_view.remove_editor(editor)
+        
+        if hasattr(editor, "shutdown"):
+            editor.shutdown()
+            
+        editor.setParent(None)
+        editor.deleteLater()
+        
         self.render_preview()
+        return True
 
     def show_hide_tab(self, e, type_):
         panels = {
@@ -1233,18 +1299,17 @@ class MainWindow(QMainWindow):
         ...
 
 
-    def new_file(self):
+    def new_file(self, target_group = None):
+        """Create an untitled editor in the active group."""
+       
         editor = self.get_editor()
-        editor.textChanged.connect(self._on_editor_text_changed)
-        editor.textChanged.connect(self.update_word_count)
-        editor.cursorPositionChanged.connect(self.update_cursor_position)
-        editor.goto_definition_requested.connect(self._open_file_at_position)
-        editor.cursorPositionChanged.connect(lambda l, i: self.sync_scroll(editor))
-        editor.textChanged.connect(self._debounce.start)
-        editor.verticalScrollBar().valueChanged.connect(
-            lambda: self.sync_scroll(editor)
-        )
-        self.tab_view.addTab(editor, "Untitled")
+        self._connect_editor(editor)
+        
+        self.tab_view.add_editor(editor, "Untitled", target_group)
+        self.current_file = None
+        self.statusBar().showMessage("Created new file", 3000)
+        
+        return editor
 
     def open_file(self):
         # open file
@@ -1278,78 +1343,122 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Opened {new_folder}", 2000)
 
     def save_file(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
-
-        path = getattr(editor, "path", None)
-        if path is None:
-            self.save_as()
-            return
-
-        path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
-        self.current_file = path
-        # Remove dirty indicator
-        index = self.tab_view.currentIndex()
-        self._dirty_tabs.discard(index)
-        title = self.tab_view.tabText(index)
-        if title.startswith("● "):
-            self.tab_view.setTabText(index, title[2:])  # remove "● " prefix
-        self.statusBar().showMessage(f"Saved {path.name}", 2000)
-
-    def save_as(self):
-        editor = self.tab_view.currentWidget()
-        if editor is None:
-            return
-
-        file_path = QFileDialog.getSaveFileName(self, "Save As", os.getcwd())[0]
-        if file_path == '':
+        
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save As", os.getcwd())
+        if not file_path:
             self.statusBar().showMessage("Cancelled", 2000)
-            return
+            return False
+        
         path = Path(file_path)
-        path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
+        
+        try:
+            path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
+        except OSError as error:
+            QMessageBox.critical(self, "Save File", f"Could not save {path}:\n{error}")
+            return False
+        
         editor.path = path
         editor.full_path = path.absolute()
-        self.tab_view.setTabText(self.tab_view.currentIndex(), path.name)
-        # Remove dirty indicator
-        index = self.tab_view.currentIndex()
-        self._dirty_tabs.discard(index)
-        # save_as already calls setTabText with the new name, so no prefix to remove
+        self.current_file = path
+        
+        self.tab_view.set_editor_tooltip(editor, str(editor.full_path))
+        
+        self.mark_editor_clean(editor)
+        self._add_to_recent_files(str(path))
+        
         self.statusBar().showMessage(f"Saved {path.name}", 2000)
+        
+        return True
+
+    def save_as(self):
+        editor = self.current_editor()
+
+        if editor is None:
+            return False
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save As",
+            os.getcwd(),
+        )
+
+        if not file_path:
+            self.statusBar().showMessage(
+                "Cancelled",
+                2000,
+            )
+            return False
+
+        path = Path(file_path)
+
+        try:
+            path.write_bytes(
+                editor.text()
+                .replace("\r\n", "\n")
+                .encode("utf-8")
+            )
+        except OSError as error:
+            QMessageBox.critical(
+                self,
+                "Save File",
+                f"Could not save {path}:\n{error}",
+            )
+            return False
+
+        editor.path = path
+        editor.full_path = path.absolute()
         self.current_file = path
 
+        self.tab_view.set_editor_tooltip(
+            editor,
+            str(editor.full_path),
+        )
+
+        self.mark_editor_clean(editor)
+        self._add_to_recent_files(str(path))
+
+        self.statusBar().showMessage(
+            f"Saved {path.name}",
+            2000,
+        )
+
+        return True
+
     def copy(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is not None:
             editor.copy()
             
     def undo(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is not None:
             editor.undo()
     
     def redo(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is not None:
             editor.redo()
     
     def cut(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is not None:
             editor.cut()
             
     def paste(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is not None:
             editor.paste()
             
     def select_all(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is not None:
             editor.selectAll()
     
     def delete_line(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
         # Get the current cursor position
@@ -1368,23 +1477,26 @@ class MainWindow(QMainWindow):
             editor.setSelection(line, 0, line, line_len)
         editor.removeSelectedText()
 
-    def on_tab_changed(self, index):
-        editor = self.tab_view.currentWidget()
+    def _on_current_editor_changed(self, editor):
+        """Refresh MainWindow state when focus moved between editors."""
         if editor is None:
+            self.current_file = None
+            self.cursor_pos_label.setText("")
+            self.word_count_label.setText("")
             return
-        want = PythonEditor if self.python_editor_active else MarkdownEditor
-        if not isinstance(editor, want):
-            editor = self._convert_current_tab(want)
-            if editor is None:
-                return
+        
         self.current_file = getattr(editor, "path", None)
+        
+        line, column = editor.getCursorPosition()
+        self.update_cursor_position(line, column)
+        self.update_word_count()
+        
         if isinstance(editor, MarkdownEditor):
+            self.preview.show()
             self.render_preview()
-        editor = self.tab_view.currentWidget()
-        if editor is not None:
-            line, index = editor.getCursorPosition()
-            self.update_cursor_position(line, index)
-            self.update_word_count()
+        else:
+            self.preview.hide()
+        
 
 
     def change_editor_python(self):
@@ -1401,7 +1513,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Markdown-Editor applied", 2000)
 
     def render_preview(self):
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if not isinstance(editor, MarkdownEditor) or not self._preview_ready:
             return
         self.md.reset()
@@ -1415,7 +1527,7 @@ class MainWindow(QMainWindow):
         self.render_preview()
 
     def sync_scroll(self, editor):
-        if not self._preview_ready or editor is not self.tab_view.currentWidget():
+        if not self._preview_ready or editor is not self.current_editor():
             return
         total = editor.lines()
         visible = editor.SendScintilla(2370)
@@ -1429,53 +1541,59 @@ class MainWindow(QMainWindow):
         self.preview.page().runJavaScript(js)
 
     def _convert_current_tab(self, EditorClass):
-        old = self.tab_view.currentWidget()
+        old = self.current_editor()
         if old is None:
             return None
         if isinstance(old, EditorClass):
             return old
-
+        
+        group = self.tab_view.group_for_editor(old)
+        
+        if group is None:
+            return None
+         
+        index = group.indexOf(old)
+        title = group.tabText(index)
+        tooltip = group.tabToolTip(index)
+        icon = group.tabIcon(index)
+        
         text = old.text()
-        index = self.tab_view.currentIndex()
-        title = self.tab_view.tabText(index)
         path = getattr(old, "path", None)
-
-        if isinstance(old, PythonEditor) and hasattr(old, "shutdown"):
-            old.shutdown()
+        was_dirty = old in self._dirty_editors
 
         new_editor = EditorClass(path=path)
-        new_editor.textChanged.connect(self._on_editor_text_changed)
-        new_editor.textChanged.connect(self.update_word_count)
-        new_editor.cursorPositionChanged.connect(self.update_cursor_position)
-        if hasattr(new_editor, "setTextSafely"):
-            new_editor.setTextSafely(text)
-        else:
-            new_editor.blockSignals(True)
-            new_editor.setText(text)
-            new_editor.blockSignals(False)
+        new_editor.setTextSafely(text)
+        self._connect_editor(new_editor)
 
-        new_editor.textChanged.connect(self._debounce.start)
-        new_editor.verticalScrollBar().valueChanged.connect(lambda: self.sync_scroll(new_editor))
-        new_editor.cursorPositionChanged.connect(lambda l, i: self.sync_scroll(new_editor))
-
-        self.tab_view.blockSignals(True)
-        self.tab_view.removeTab(index)
-        self.tab_view.insertTab(index, new_editor, title)
-        self.tab_view.setCurrentIndex(index)
-        self.tab_view.blockSignals(False)
-
-        self.current_file = path
-
+        group.blockSignals(True)
+        group.removeTab(index)
+        group.insertTab(index, new_editor, icon, title)
+        group.setTabToolTip(index, tooltip)
+        group.setCurrentIndex(index)
+        group.blockSignals(False)
+        
+        if was_dirty:
+            self._dirty_editors.discard(old)
+            self._dirty_editors.add(new_editor)
+            
+        if hasattr(old, "shutdown"):
+            old.shutdown()
+            
+        old.setParent(None)
         old.deleteLater()
+        
+        new_editor.setFocus()
+        self.tab_view.focus_editor(new_editor)
         return new_editor
-
+        
+        
     def _swap_editor(self, EditorClass):
         return self._convert_current_tab(EditorClass)
         
     def show_find_bar(self):
         """Show the find bar (Ctrl+F mode)."""
         # Pre-fill with selected text if any
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         selected = editor.selectedText() if editor else ""
         self.find_bar.set_search_text(selected)
         self.find_bar.show_find()
@@ -1484,7 +1602,7 @@ class MainWindow(QMainWindow):
         
     def show_replace_bar(self):
         """Show the find+replace bar (Ctrl+H mode)."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         selected = editor.selectedText() if editor else ""
         self.find_bar.set_search_text(selected)
         self.find_bar.show_replace()
@@ -1493,7 +1611,7 @@ class MainWindow(QMainWindow):
         
     def _do_find_next(self, text, case_sensitive, whole_word, regex):
         """Search forward from the current cursor position."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
         line, index = editor.getCursorPosition()
@@ -1515,7 +1633,7 @@ class MainWindow(QMainWindow):
         
     def _do_find_prev(self, text, case_sensitive, whole_word, regex):
         """Search backward from the current cursor position."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
 
@@ -1536,7 +1654,7 @@ class MainWindow(QMainWindow):
         
     def _do_replace(self, find_text, replace_text, case_sensitive, whole_word, regex):
         """Replace the currently selected match, then find the next one."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return 
         # If there's a selection and it matches the search text, replace it
@@ -1549,7 +1667,7 @@ class MainWindow(QMainWindow):
         
     def _do_replace_all(self, find_text, replace_text, case_sensitive, whole_word, regex):
         """Replace all occurrences in the current document."""
-        editor = self.tab_view.currentWidget()
+        editor = self.current_editor()
         if editor is None:
             return
         
@@ -1578,34 +1696,26 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Replace {count} occurrences", 3000)
         
     def closeEvent(self, event):
-        # Check for unsaved tabs
-        for i in range(self.tab_view.count()):
-            if i in self._dirty_tabs:
-                title = self.tab_view.tabText(i)
-                if title.startswith("● "):
-                    title = title[2:]
-                reply = QMessageBox.question(
-                    self, "Unsaved Changes",
-                    f"'{title}' has unsaved changes. Close anyway?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
-                )
-                if reply == QMessageBox.No:
-                    event.ignore()
-                    return
-        
-        # Stop the terminal process
-        if hasattr(self, 'terminal'):
+        for editor in list(self.tab_view.all_editors()):
+            if not self.close_editor(editor):
+                event.ignore()
+                return
+
+        if hasattr(self, "terminal"):
             self.terminal.stop()
-        
-        # Stop the Python runner process
-        if hasattr(self, "python_runner") and self.python_runner:
+
+        if (
+            hasattr(self, "python_runner") and
+            self.python_runner
+        ):
             self.python_runner.stop()
-            
-        # Save settings
+
         if hasattr(self, "settings"):
-            self.settings.setValue("recent_files", self.recent_files)
-        
+            self.settings.setValue(
+                "recent_files",
+                self.recent_files,
+            )
+
         event.accept()
     
     def check_for_updates(self):
