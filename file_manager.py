@@ -9,22 +9,15 @@ import os
 import sys
 import subprocess
 
-from pythoneditor import PythonEditor
-from markdowneditor import MarkdownEditor
-
 class FileManager(QTreeView):
-    def __init__(self, tab_view, get_editor, _swap_editor, set_new_tab=None, main_window=None, is_python=False):
+    def __init__(self, set_new_tab, main_window, parent=None):
         super(FileManager, self).__init__(None)
 
-        self.tab_view = tab_view
         self.set_new_tab = set_new_tab
-        self.get_editor = get_editor
-        self._swap_editor = _swap_editor
         self.main_window = main_window
-        self.is_python = is_python
-        self.editor_class = PythonEditor if self.is_python else MarkdownEditor
-        # renaming feature variables
-        self.previous_rename_name = None
+        
+        self._rename_old_path = None
+        self._rename_is_directory = False
         self.is_renaming = False
         self.current_edit_index = None
 
@@ -127,33 +120,43 @@ class FileManager(QTreeView):
         return dialog.exec_()
 
     def rename_file_with_index(self):
+        """
+        Notify MainWindow after QFileSystemModel completes a rename.
+        
+        QFileSystemModel performs the actual disk rename. This method only
+        propagates the changed path to any editor tabs that represent it.
+        """
         try:
-            new_name = self.model.fileName(self.current_edit_index)
-            if self.previous_rename_name == new_name:
+            old_path = self._rename_old_path
+            if old_path is None:
                 return
+            new_path = Path(
+                self.model.filePath(self.current_edit_index)
+            )
 
-            # loop over all the tabs open and find the one with the old name
-            for editor in self.tab_view.findChildren(self.editor_class):
-                editor_path = getattr(editor, "path", None)
-                if editor_path is not None and editor_path.name == self.previous_rename_name:
-                    editor.path = editor.path.parent / new_name
-                    self.tab_view.setTabText(
-                        self.tab_view.indexOf(editor), new_name
-                    )
-                    self.tab_view.repaint()
-                    editor.full_path = editor.path.absolute()
-                    if self.main_window:
-                        self.main_window.current_file = editor.path
-                    break
+            if new_path == old_path:
+                return
+            self.main_window.on_file_renamed(
+                old_path=old_path,
+                new_path=new_path,
+                is_directory=self._rename_is_directory,
+            )
         finally:
+            self._rename_old_path = None
+            self._rename_is_directory = False
+            self.current_edit_index = None
             self.is_renaming = False
-            self.previous_rename_name = None
 
     def action_rename(self, ix):
-        self.edit(ix)
-        self.previous_rename_name = self.model.fileName(ix)
-        self.is_renaming = True
+        """Starts QFileSystemModel inline rename and remember the original path."""
+        if not ix.isValid():
+            return
+        
+        self._rename_old_path = Path(self.model.filePath(ix))
+        self._rename_is_directory = self.model.isDir(ix)
         self.current_edit_index = ix
+        self.is_renaming = True
+        self.edit(ix)
 
     def delete_file(self, path: Path):
         if path.is_dir():
@@ -162,23 +165,60 @@ class FileManager(QTreeView):
             path.unlink()
 
 
-    def action_delete(self, ix):
-        file_name = self.model.fileName(ix)
-        dialog = self.show_dialog(
-            "Delete", f"Are you sure you want to delete {file_name}",
-        )
-        if dialog == QMessageBox.Yes:
-            if self.selectionModel().selectedRows():
-                for i in self.selectionModel().selectedRows():
-                    path = Path(self.model.filePath(i))
-                    self.delete_file(path)
-                    for editor in self.tab_view.findChildren(self.editor_class):
-                        editor_path = getattr(editor, "path", None)
-                        if editor_path is not None and editor_path == path:
-                            self.tab_view.removeTab(
-                                self.tab_view.indexOf(editor)
-                            )
+    def action_delete(self, index: QModelIndex):
+        """Close affected editor tabs first, then delete selected filesystem paths."""
+        if not index.isValid():
+            return
+        
+        file_name = self.model.fileName(index)
+        answer = self.show_dialog("Delete", f"Are you sure you want to delete {file_name}?")
+        
+        if answer != QMessageBox.Yes:
+            return
+        selected_indexes = self.selectionModel().selectedRows()    
+        if not selected_indexes:
+            selected_indexes = [index]
+        selected_paths = [
+            (
+                Path(self.model.filePath(item)),
+                self.model.isDir(item),
+            )
+            for item in selected_indexes
+        ]
+        # If both parent folder and one of its children are selected,
+        # delete only the parent. The child disappears with it.
+        top_level_paths = []
+        
+        for path, is_directory in selected_paths:
+            has_selected_parent = any(
+                other_path != path and
+                other_path in path.parents
+                for other_path, _ in selected_paths
+            )
 
+            if not has_selected_parent:
+                top_level_paths.append((path, is_directory))
+
+        for path, is_directory in top_level_paths:
+            can_delete = self.main_window.close_editors_for_path(
+                target_path=path,
+                is_directory=is_directory,
+            )
+
+            if not can_delete:
+                return
+
+        for path, _ in top_level_paths:
+            try:
+                self.delete_file(path)
+            except OSError as error:
+                QMessageBox.critical(
+                    self,
+                    "Delete",
+                    f"Could not delete '{path.name}':\n{error}",
+                )
+                return
+                
     def action_new_file(self, ix: QModelIndex):
         root_path = self.model.rootPath()
         if ix.column() != -1 and self.model.isDir(ix):

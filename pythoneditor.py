@@ -42,7 +42,7 @@ class PythonEditor(QsciScintilla):
         self.setEolVisibility(False)
 
         self.setAutoCompletionSource(QsciScintilla.AcsAll)
-        self.setAutoCompletionThreshold(3)
+        self.setAutoCompletionThreshold(2)
         self.setAutoCompletionCaseSensitivity(False)
         self.setAutoCompletionUseSingle(QsciScintilla.AcusNever)
 

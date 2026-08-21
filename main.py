@@ -19,7 +19,7 @@ from terminal_widget import TerminalWidget
 from multi_tab_view import MultiTabView
 import resources_rc
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "v1.8.1"
 
 def resource_path(relative_path):
     """
@@ -979,7 +979,7 @@ class MainWindow(QMainWindow):
             self.close_editor
         )
 
-        
+
         #editor_container = QWidget()
         #editor_layout = QStackedWidget(editor_container)
 
@@ -1020,11 +1020,9 @@ class MainWindow(QMainWindow):
         self.file_manager_layout.setContentsMargins(0, 0, 0, 0)
         self.file_manager_layout.setSpacing(0)
         self.file_manager = FileManager(
-            tab_view=self.tab_view,
-            get_editor=self.get_editor,
-            _swap_editor=self._swap_editor,
-            set_new_tab=self.set_new_tab,
+            set_new_tab = self.set_new_tab,
             main_window=self,
+            parent=self,
         )
 
         # setup layout
@@ -1255,7 +1253,90 @@ class MainWindow(QMainWindow):
         
         self.render_preview()
         return True
-
+    
+    def on_file_rename(self, old_path: Path, new_path: Path, is_directory: bool = False):
+        """Update every editor affected by a filesystem rename.
+        
+        FileManager has already renamed the entry in QFileSystemModel.
+        This method updates the in-memory editor metadata and the tab UI.
+        """
+        
+        old_path = Path(old_path)
+        new_path = Path(new_path)
+        
+        for editor in self.tab_view.all_editors():
+            editor_path = getattr(editor, "path", None)
+            
+            if editor_path is None:
+                continue
+                
+            editor_path = Path(editor_path)
+            
+            if is_directory:
+                if editor_path == old_path:
+                    updated_path == new_path
+                elif old_path in editor_path.parents:
+                    relative_path = editor_path.relative_to(old_path)
+                    updated_path = new_path / relative_path
+                else:
+                    continue
+            
+            else:
+                if editor_path != old_path:
+                    continue
+                    
+                updated_path = new_path
+                
+            editor.path = updated_path
+            editor.full_path = updated_path.absolute()
+            
+            is_dirty = editor in self._dirty_editors
+            title = updated_path.name
+            
+            if is_dirty:
+                title = f"● {title}"
+                
+            self.tab_view.set_editor_title(editor, title)
+            self.tab_view.set_editor_tooltip(editor, str(editor.full_path))
+            
+            if editor is self.current_editor():
+                self.current_file = updated_path
+                
+    def close_editors_for_path(self, target_path: Path, is_directory: bool = False):
+        """
+        Close open editors affected by deletion.
+        
+        Returns True when all affected editors closed successfully.
+        Returns False when the uder cancels an unsaved-changes prompt.
+        """
+        
+        target_path = Path(target_path)
+            
+        affected_editors = []
+        
+        for editor in self.tab_view.all_editors():
+            editor_path = getattr(editor, "path", None)
+            
+            if editor_path == Path(editor_path):
+                continue
+                
+            editor_path = Path(editor_path)
+            
+            if is_directory:
+                is_affected = (editor_path == target_path or target_path in editor_path.parents)
+            else:
+                is_affected = editor_path == target_path
+                
+            if is_affected:
+                affected_editors.append(editor)
+                
+        for editor in affected_editors:
+            if not self.close_editor(editor):
+                return False
+                
+        return True
+                
+    
     def show_hide_tab(self, e, type_):
         panels = {
             "folder": self.file_manager_frame,
@@ -1343,36 +1424,35 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Opened {new_folder}", 2000)
 
     def save_file(self):
+        """
+        Save the currently focused editor.
+        
+        An editor opened from disk has an existing 'editor.path', so it is written
+        directly to that path. Only an untitled editor has path=None and must open
+        the Save As dialog.
+        """
         editor = self.current_editor()
         if editor is None:
-            return
-        
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save As", os.getcwd())
-        if not file_path:
-            self.statusBar().showMessage("Cancelled", 2000)
             return False
         
-        path = Path(file_path)
+        path = getattr(editor, "path", None)
         
+        # Only untitled editors need  a user-selected destination.
+        if path is None:
+            return self.save_as()
+            
+        path = Path(path)
         try:
             path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
         except OSError as error:
-            QMessageBox.critical(self, "Save File", f"Could not save {path}:\n{error}")
+            QMessageBox.critical(self, "Save File", f"Could not save '{path}':\n{error}")
             return False
-        
-        editor.path = path
-        editor.full_path = path.absolute()
+            
         self.current_file = path
-        
-        self.tab_view.set_editor_tooltip(editor, str(editor.full_path))
-        
         self.mark_editor_clean(editor)
-        self._add_to_recent_files(str(path))
-        
-        self.statusBar().showMessage(f"Saved {path.name}", 2000)
-        
+        self.statusBar().showMessage(f"Saved {path.name}", 3000)
         return True
-
+    
     def save_as(self):
         editor = self.current_editor()
 
@@ -1496,8 +1576,6 @@ class MainWindow(QMainWindow):
             self.render_preview()
         else:
             self.preview.hide()
-        
-
 
     def change_editor_python(self):
         self.python_editor_active = True
@@ -1794,9 +1872,7 @@ class MainWindow(QMainWindow):
             # Docs: https://docs.python.org/3/library/webbrowser.html#webbrowser.open
             import webbrowser
             webbrowser.open(download_url)
-    
-    
-        
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     main = MainWindow()

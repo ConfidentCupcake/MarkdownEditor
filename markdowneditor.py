@@ -9,6 +9,7 @@ from markdowncustomlexer import MarkdownCustomLexer
  
 
 class MarkdownEditor(QsciScintilla):
+    focused = pyqtSignal(object)
     def __init__(self, parent=None, path: Path=None, is_python_file: bool=False):
         super(MarkdownEditor, self).__init__(parent)
         self.path = path
@@ -85,7 +86,7 @@ class MarkdownEditor(QsciScintilla):
             self.setModified(False)
         finally:
             self.blockSignals(False)
-            self._loading_text(False)
+            self._loading_text = False
             
     def focusInEvent(self, event):
         super().focusInEvent(event)
