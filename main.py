@@ -1,25 +1,27 @@
+import json
 import os
 import sys
-import markdown
-import json
 from pathlib import Path
+
+import markdown
+from PyQt5.Qsci import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
-from PyQt5.QtWidgets import *
-from PyQt5.Qsci import *
 from PyQt5.QtWebEngineWidgets import QWebEngineView
-from markdowneditor import MarkdownEditor
-from pythoneditor import PythonEditor
-from file_manager import FileManager
-from fuzzy_searcher import SearchItem, SearchWorker
-from python_runner import PythonRunner
-from console_widget import ConsoleWidget
-from find_replace import FindReplaceBar
-from terminal_widget import TerminalWidget
-from multi_tab_view import MultiTabView
-import resources_rc
+from PyQt5.QtWidgets import *
 
-APP_VERSION = "v1.8.1"
+from console_widget import ConsoleWidget
+from file_manager import FileManager
+from find_replace import FindReplaceBar
+from fuzzy_searcher import SearchItem, SearchWorker
+from markdowneditor import MarkdownEditor
+from multi_tab_view import MultiTabView
+from python_runner import PythonRunner
+from pythoneditor import PythonEditor
+from terminal_widget import TerminalWidget
+
+APP_VERSION = "v1.9.0"
+
 
 def resource_path(relative_path):
     """
@@ -34,13 +36,15 @@ def resource_path(relative_path):
 
     Docs: https://pyinstaller.org/en/stable/runtime-information.html
     """
-    if hasattr(sys, '_MEIPASS'):
+    if hasattr(sys, "_MEIPASS"):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
+
 
 class MainWindow(QMainWindow):
     WIDTH = 1400
     HEIGHT = 900
+
     def __init__(self):
         super().__init__()
         self._dirty_editors = set()
@@ -48,12 +52,14 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("CodeEditor", "CodeEditor")
         # Load the saved recent files list, default to empty list
         self.recent_files = self.settings.value("recent_files", [], type=list)
+        self.ruff_save_mode = self.settings.value("ruff_save_mode", "safe_format", type=str)
 
         # Detect if running as a bundled exe
-        if hasattr(sys, '_MEIPASS'):
+        if hasattr(sys, "_MEIPASS"):
             # Running as PyInstaller exe — sys.executable is the editor itself.
             # Try to find a real Python installation on the system.
             import shutil
+
             found_python = shutil.which("python") or shutil.which("python3")
             if found_python:
                 self.python_runner.set_interpreter(found_python)
@@ -65,19 +71,29 @@ class MainWindow(QMainWindow):
                 else:
                     # Prompt user to select a Python interpreter
                     QMessageBox.warning(
-                        self, "Python Interpreter Required",
+                        self,
+                        "Python Interpreter Required",
                         "No Python installation found.\n"
-                        "Please select your Python interpreter (python.exe)."
+                        "Please select your Python interpreter (python.exe).",
                     )
                     self.choose_interpreter()
         else:
             # Running from source — sys.executable is the real Python
             self.python_runner.set_interpreter(self._load_interpreter())
-        self.console = None # will be created in set_up_console_dock
+        self.console = None  # will be created in set_up_console_dock
         self.python_editor_active = False
         self.current_file = None
         self.md = markdown.Markdown(
-            extensions=["extra", "codehilite", "toc", "sane_lists", "nl2br", "admonition", "smarty", "meta"]
+            extensions=[
+                "extra",
+                "codehilite",
+                "toc",
+                "sane_lists",
+                "nl2br",
+                "admonition",
+                "smarty",
+                "meta",
+            ]
         )
         self._preview_css = """
            body { font-family: sans-serif; max-width: 800px; margin: 2em auto 0;
@@ -87,9 +103,10 @@ class MainWindow(QMainWindow):
            pre { background:#1e1f22; padding:1em; border-radius:6px; overflow-x:auto; }
            """
         self.init_ui()
-        if hasattr(sys, '_MEIPASS'):
+        if hasattr(sys, "_MEIPASS"):
             # We're running as a bundled exe
             import os
+
             home = os.path.expanduser("~")
             self.file_manager.model.setRootPath(home)
             self.file_manager.setRootIndex(self.file_manager.model.index(home))
@@ -111,7 +128,7 @@ class MainWindow(QMainWindow):
         print(f"QSS path: {qss_path}")
         print(f"QSS exists: {os.path.exists(qss_path)}")
         try:
-            with open(qss_path, "r") as f:
+            with open(qss_path) as f:
                 self.setStyleSheet(f.read())
         except FileNotFoundError as e:
             print(f"STYLESHEET ERROR: {e}")
@@ -124,17 +141,17 @@ class MainWindow(QMainWindow):
 
         self.set_up_menu()
         self.set_up_body()
-        
+
         # Find/Replace bar. Hidden by default
         self.find_bar = FindReplaceBar(show_replace=False, parent=self)
         self.find_bar.hide()
-        
+
         # Connect the find bar's signals to our search methods
         self.find_bar.find_next_requested.connect(self._do_find_next)
         self.find_bar.find_prev_requested.connect(self._do_find_prev)
         self.find_bar.replace_requested.connect(self._do_replace)
         self.find_bar.replace_all_requested.connect(self._do_replace_all)
-        
+
         self.set_up_console_dock()
 
         self._preview_ready = False
@@ -142,9 +159,9 @@ class MainWindow(QMainWindow):
         base = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>{self._preview_css}</style></head><body><div id="content"></div></body></html>"""
         self.preview.setHtml(base)
         self.statusBar().setFont(self.window_font)
-        self.statusBar().setStyleSheet('''
+        self.statusBar().setStyleSheet("""
                 color: #CCCCCC;
-        ''')
+        """)
         self.statusBar().showMessage(f"Interpreter: {self.python_runner.interpreter}")
         self.cursor_pos_label = QLabel("Ln 1, Col 1")
         self.cursor_pos_label.setStyleSheet("color: #888; padding: 0 10px;")
@@ -181,72 +198,63 @@ class MainWindow(QMainWindow):
     def _on_editor_text_changed(self, editor):
         """Mark the specific editor that emitted textChanged as dirty."""
         if editor is None:
-            return 
-            
+            return
         if getattr(editor, "_loading_text", False):
             return
-        
         self._dirty_editors.add(editor)
-        
         path = getattr(editor, "path", None)
         base_title = path.name if path is not None else "Untitled"
-        
         self.tab_view.set_editor_title(editor, f"● {base_title}")
-        
         if editor is self.current_editor():
             self.update_word_count()
-            
             if isinstance(editor, MarkdownEditor):
                 self._debounce.start()
-                
+
     def mark_editor_clean(self, editor):
         """Remove dirty state after a sucessfull save."""
         if editor is None:
             return
-            
         self._dirty_editors.discard(editor)
         editor.setModified(False)
-        
         path = getattr(editor, "path", None)
         title = path.name if path is not None else "Untitled"
-        
         self.tab_view.set_editor_title(editor, title)
-        
+
     def update_cursor_position(self, line: int, index: int):
         """
         Update the Ln/Col display in the status bar.
-        
+
         QScintilla uses 0-based line and column numbers.
         Users expect 1-based, so we add 1 to both.
         """
         self.cursor_pos_label.setText(f"Ln {line + 1}, Col {index + 1}")
-    
+
     def set_up_console_dock(self):
         """Create the bottom console panel."""
         self.console = ConsoleWidget(self.python_runner, self)
         self.console.run_btn.clicked.connect(self.run_current_file)
-        
+
         dock = QDockWidget("Python Console", self)
         dock.setWidget(self.console)
         dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
-        
+
         dock.hide()
         self.console_dock = dock
-        
+
         # Terminal (new)
         self.terminal = TerminalWidget(self)
         terminal_dock = QDockWidget("Terminal", self)
         terminal_dock.setWidget(self.terminal)
         terminal_dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
         self.addDockWidget(Qt.BottomDockWidgetArea, terminal_dock)
-        
+
         terminal_dock.hide()
         self.terminal_dock = terminal_dock
-    
+
     def get_sidebar_label(self, path, name):
         label = QLabel(self)
-        label.setPixmap(QPixmap(path).scaled(QSize(25,25)))
+        label.setPixmap(QPixmap(path).scaled(QSize(25, 25)))
         label.setAlignment(Qt.AlignmentFlag.AlignTop)
         label.setFont(self.window_font)
         label.mousePressEvent = lambda e: self.show_hide_tab(e, name)
@@ -262,29 +270,58 @@ class MainWindow(QMainWindow):
     def current_editor(self):
         """Return the editor focused in the active tab group."""
         return self.tab_view.current_editor()
-    
+
     def _connect_editor(self, editor):
         """Connect all MainWindow signals required by an editor."""
-        editor.textChanged.connect(lambda ed=editor:self._on_editor_text_changed(ed))
-
+        editor.textChanged.connect(lambda ed=editor: self._on_editor_text_changed(ed))
         editor.textChanged.connect(self._debounce.start)
         editor.textChanged.connect(self.update_word_count)
-
-        editor.cursorPositionChanged.connect(lambda line, column, ed=editor: self._on_editor_cursor_changed(ed, line, column))
+        editor.cursorPositionChanged.connect(
+            lambda line, column, ed=editor: self._on_editor_cursor_changed(ed, line, column)
+        )
         editor.cursorPositionChanged.connect(lambda line, column, ed=editor: self.sync_scroll(ed))
-
-        editor.verticalScrollBar().valueChanged.connect(lambda value, ed=editor: self.sync_scroll(ed))
-
+        editor.verticalScrollBar().valueChanged.connect(
+            lambda value, ed=editor: self.sync_scroll(ed)
+        )
         if isinstance(editor, PythonEditor):
             editor.goto_definition_requested.connect(self._open_file_at_position)
-        
-    def _on_editor_cursor_changed(self, editor, line:int, column:int):
+
+    def _run_ruff_before_save(self, editor, target_path: Path):
+        """Apply selected save policy in memory before the existing disk write."""
+        if not isinstance(editor, PythonEditor):
+            return
+        editor.ruff_service.python_executable = self.python_runner.interpreter
+        if self.ruff_save_mode == "safe_format":
+            editor.apply_safe_fixes_with_ruff(target_path)
+            editor.format_with_ruff(target_path)
+
+    def format_current_document(self):
+        """Format only the focused Python tab; do not save automatically"""
+        editor = self.current_editor()
+        if isinstance(editor, PythonEditor):
+            editor.ruff_service.python_executable = self.python_runner.interpreter
+            editor.format_with_ruff()
+
+    def organize_current_imports(self):
+        """Organize imports only in the focused Python tab; do not save automatically."""
+        editor = self.current_editor()
+        if isinstance(editor, PythonEditor):
+            editor.ruff_service.python_executable = self.python_runner.interpreter
+            editor.organize_imports_with_ruff()
+
+    def apply_safe_ruff_fixes(self):
+        """Apply only safe Ruff fixes to focused Python source; do not save automatically."""
+        editor = self.current_editor()
+        if isinstance(editor, PythonEditor):
+            editor.ruff_service.python_executable = self.python_runner.interpreter
+            editor.apply_safe_fixes_with_ruff(editor.full_path or Path.cwd() / "untitled.py")
+
+    def _on_editor_cursor_changed(self, editor, line: int, column: int):
         """Update the status bar only for the focused editor."""
         if editor is not self.current_editor():
             return
         self.update_cursor_position(line, column)
-        
-    
+
     def set_up_menu(self):
         menu_bar = self.menuBar()
 
@@ -300,14 +337,13 @@ class MainWindow(QMainWindow):
         open_file.setShortcut("Ctrl+O")
         open_file.setShortcutContext(Qt.ApplicationShortcut)
         open_file.triggered.connect(self.open_file)
-        
+
         # Open Recent submenu
         # addMenu returns a QMenu object. We store it as an instance
         # variable so we can rebuild it when the recent files list changes.
         self.recent_menu = file_menu.addMenu("Open Recent")
         self._update_recent_menu()
-        
-        
+
         open_folder = file_menu.addAction("Open Folder")
         open_folder.setShortcut("Ctrl+K")
         open_folder.setShortcutContext(Qt.ApplicationShortcut)
@@ -323,12 +359,12 @@ class MainWindow(QMainWindow):
         save_as.setShortcut("Ctrl+Shift+S")
         save_as.setShortcutContext(Qt.ApplicationShortcut)
         save_as.triggered.connect(self.save_as)
-        
+
         save_all_action = file_menu.addAction("Save All")
         save_all_action.setShortcut("Ctrl+Shift+A")
         save_all_action.setShortcutContext(Qt.ApplicationShortcut)
         save_all_action.triggered.connect(self.save_all)
-        
+
         close_all_action = file_menu.addAction("Close All")
         close_all_action.setShortcut("Ctrl+Shift+W")
         close_all_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -336,67 +372,67 @@ class MainWindow(QMainWindow):
 
         # Edit menu
         edit_menu = menu_bar.addMenu("Edit")
-        
+
         undo_action = edit_menu.addAction("Undo")
         undo_action.setShortcut("Ctrl+Z")
         undo_action.setShortcutContext(Qt.ApplicationShortcut)
         undo_action.triggered.connect(self.undo)
-        
+
         redo_action = edit_menu.addAction("Redo")
         redo_action.setShortcut("Ctrl+Shift+Z")
         redo_action.setShortcutContext(Qt.ApplicationShortcut)
         redo_action.triggered.connect(self.redo)
-        
+
         edit_menu.addSeparator()
-        
+
         cut_action = edit_menu.addAction("Cut")
         cut_action.setShortcut("Ctrl+X")
         cut_action.setShortcutContext(Qt.ApplicationShortcut)
         cut_action.triggered.connect(self.cut)
-        
+
         copy_action = edit_menu.addAction("Copy")
         copy_action.setShortcut("Ctrl+C")
         copy_action.setShortcutContext(Qt.ApplicationShortcut)
         copy_action.triggered.connect(self.copy)
-        
+
         paste_action = edit_menu.addAction("Paste")
         paste_action.setShortcut("Ctrl+V")
         paste_action.setShortcutContext(Qt.ApplicationShortcut)
         paste_action.triggered.connect(self.paste)
-        
+
         edit_menu.addSeparator()
-        
+
         select_all_action = edit_menu.addAction("Select All")
         select_all_action.setShortcut("Ctrl+A")
         select_all_action.setShortcutContext(Qt.ApplicationShortcut)
         select_all_action.triggered.connect(self.select_all)
-        
+
         delete_line_action = edit_menu.addAction("Delete Line")
         delete_line_action.setShortcut("Ctrl+Shift+K")
         delete_line_action.setShortcutContext(Qt.ApplicationShortcut)
         delete_line_action.triggered.connect(self.delete_line)
-        
+
         edit_menu.addSeparator()
-        
+
         find_action = edit_menu.addAction("Find")
         find_action.setShortcut("Ctrl+F")
         find_action.setShortcutContext(Qt.ApplicationShortcut)
         find_action.triggered.connect(self.show_find_bar)
-        
+
         replace_action = edit_menu.addAction("Replace")
         replace_action.setShortcut("Ctrl+H")
         replace_action.setShortcutContext(Qt.ApplicationShortcut)
         replace_action.triggered.connect(self.show_replace_bar)
-        
+
         edit_menu.addSeparator()
-        
+
         goto_action = edit_menu.addAction("Go to Line")
         goto_action.setShortcut("Ctrl+G")
         goto_action.setShortcutContext(Qt.ApplicationShortcut)
         goto_action.triggered.connect(self.goto_line)
-        
+
         edit_menu.addSeparator()
-        
+
         toggle_comment_action = edit_menu.addAction("Toggle Comment")
         toggle_comment_action.setShortcut("Ctrl+1")
         toggle_comment_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -408,6 +444,22 @@ class MainWindow(QMainWindow):
         goto_definition_action.setShortcutContext(Qt.ApplicationShortcut)
         goto_definition_action.triggered.connect(self._trigger_goto_definition)
 
+        edit_menu.addSeparator()
+        format_action = edit_menu.addAction("Format Document")
+        format_action.setShortcut("Ctrl+Alt+L")
+        format_action.setShortcutContext(Qt.ApplicationShortcut)
+        format_action.triggered.connect(self.format_current_document)
+
+        imports_actions = edit_menu.addAction("Organize Imports")
+        imports_actions.setShortcut("Ctrl+Alt+O")
+        imports_actions.setShortcutContext(Qt.ApplicationShortcut)
+        imports_actions.triggered.connect(self.organize_current_imports)
+
+        fix_action = edit_menu.addAction("Apply Safe Ruff Fixes")
+        fix_action.setShortcut("Ctrl+Alt+F")
+        fix_action.setShortcutContext(Qt.ApplicationShortcut)
+        fix_action.triggered.connect(self.apply_safe_ruff_fixes)
+
         # Mode menu
         mode_menu = menu_bar.addMenu("Mode")
 
@@ -416,15 +468,15 @@ class MainWindow(QMainWindow):
         self.python_editor_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
         self.python_editor_action.setShortcutContext(Qt.ApplicationShortcut)
         self.python_editor_action.triggered.connect(self.change_editor_python)
-        
+
         # change to Markdown-Editor
         self.markdown_editor_action = mode_menu.addAction("Markdown Editor")
         self.markdown_editor_action.setShortcut(QKeySequence("Ctrl+Shift+M"))
         self.markdown_editor_action.setShortcutContext(Qt.ApplicationShortcut)
         self.markdown_editor_action.triggered.connect(self.change_editor_markdown)
-        
+
         run_menu = self.menuBar().addMenu("Run")
-        
+
         run_file_action = run_menu.addAction("Run File")
         run_file_action.setShortcut("F5")
         run_file_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -434,26 +486,26 @@ class MainWindow(QMainWindow):
         run_with_args_action.setShortcut("Shift+F5")
         run_with_args_action.setShortcutContext(Qt.ApplicationShortcut)
         run_with_args_action.triggered.connect(self.run_with_arguments)
-        
+
         run_selection_action = run_menu.addAction("Run Selection")
-        run_selection_action. setShortcut("Ctrl+Return")
+        run_selection_action.setShortcut("Ctrl+Return")
         run_selection_action.setShortcutContext(Qt.ApplicationShortcut)
         run_selection_action.triggered.connect(self.run_selection)
-        
+
         stop_action = run_menu.addAction("Stop")
         stop_action.setShortcut("F6")
         stop_action.setShortcutContext(Qt.ApplicationShortcut)
         stop_action.triggered.connect(self.python_runner.stop)
-        
+
         run_menu.addSeparator()
 
         interpreter_action = run_menu.addAction("Choose Interpreter...")
         interpreter_action.triggered.connect(self.choose_interpreter)
 
         # Viewmenu for toggling the Sidebar
-        
+
         view_menu = self.menuBar().addMenu("View")
-        
+
         toggle_sidebar_action = view_menu.addAction("Toggle Sidebar")
         toggle_sidebar_action.setShortcut("Ctrl+B")
         toggle_sidebar_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -468,29 +520,31 @@ class MainWindow(QMainWindow):
         toggle_console_action.setShortcut("Ctrl+Shift+-")
         toggle_console_action.setShortcutContext(Qt.ApplicationShortcut)
         toggle_console_action.triggered.connect(self.toggle_console)
-        
+
         toggle_terminal_action = view_menu.addAction("Toggle Terminal")
         toggle_terminal_action.setShortcut("Ctrl+Shift+T")
         toggle_terminal_action.setShortcutContext(Qt.ApplicationShortcut)
         toggle_terminal_action.triggered.connect(self._toggle_terminal)
-        
+
         view_menu.addSeparator()
-        
+
         split_right_action = view_menu.addAction("Split Right")
         split_right_action.setShortcut("Ctrl+Alt+Right")
         split_right_action.setShortcutContext(Qt.ApplicationShortcut)
         split_right_action.triggered.connect(self.split_current_editor_right)
-        
+
         unsplit_action = view_menu.addAction("Unsplit")
         unsplit_action.setShortcut("Ctrl+Alt+Left")
         unsplit_action.setShortcutContext(Qt.ApplicationShortcut)
         unsplit_action.triggered.connect(self.unsplit_active_group)
-        
+
+        view_menu.addSeparator()
+
         fullscreen_editor = view_menu.addAction("Fullscreen")
         fullscreen_editor.setShortcut("F11")
         fullscreen_editor.setShortcutContext(Qt.ApplicationShortcut)
         fullscreen_editor.triggered.connect(self._show_full_screen)
-        
+
         starting_window_size = view_menu.addAction("Startup Window Size")
         starting_window_size.setShortcut("Shift+F11")
         starting_window_size.setShortcutContext(Qt.ApplicationShortcut)
@@ -500,27 +554,24 @@ class MainWindow(QMainWindow):
 
         check_updates_action = help_menu.addAction("Check for Updates")
         check_updates_action.triggered.connect(self.check_for_updates)
-    
+
     def split_current_editor_right(self):
         editor = self.current_editor()
-        
+
         if editor is None:
             return
-        
+
         self.tab_view.split_right(editor)
-        
+
     def unsplit_active_group(self):
         self.tab_view.unsplit_active_group()
-        
-        
-    
-    
+
     def _toggle_terminal(self):
         """Show or hide the terminal dock"""
-        if self.terminal_dock.isVisible():
-            self.terminal_dock.hide()
-        else:
+        if not self.terminal_dock.isVisible():
             self.terminal_dock.show()
+        else:
+            self.terminal_dock.hide()
 
     def _trigger_goto_definition(self):
         editor = self.current_editor()
@@ -570,7 +621,6 @@ class MainWindow(QMainWindow):
         # Run the file with the arguments
         self.python_runner.run_file_with_args(Path(path), args, cwd=Path(path).parent)
 
-
     def save_all(self):
         saved_count = 0
         original_editor = self.current_editor()
@@ -580,13 +630,9 @@ class MainWindow(QMainWindow):
 
             if path is None:
                 continue
-
+            self._run_ruff_before_save(editor, path)
             try:
-                path.write_bytes(
-                    editor.text()
-                    .replace("\r\n", "\n")
-                    .encode("utf-8")
-                )
+                path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
             except OSError as error:
                 QMessageBox.warning(
                     self,
@@ -624,7 +670,9 @@ class MainWindow(QMainWindow):
         """Open a file from the recent files list."""
         file_path = Path(path)
         if not file_path.exists():
-            QMessageBox.information(self, "File Not Found", f"The file '{file_path.name}' no longer exists.")
+            QMessageBox.information(
+                self, "File Not Found", f"The file '{file_path.name}' no longer exists."
+            )
             self.recent_files.remove(path)
             self._save_recent_files()
             self._update_recent_menu()
@@ -661,28 +709,28 @@ class MainWindow(QMainWindow):
         editor = self.current_editor()
         if editor is None:
             return
-        
+
         if not isinstance(editor, PythonEditor):
             return
-        
+
         if editor.hasSelectedText():
             self._toggle_comment_selection(editor)
         else:
             self._toggle_comment_single_line(editor)
-            
+
     def _toggle_comment_single_line(self, editor):
         """Toggle comment on the line where the cursor currently is."""
         line, index = editor.getCursorPosition()
-        
+
         # Read the text of the current line
         # editor.text(line) returns the text of line `line`INCLUDING the newline
         line_text = editor.text(line)
-        
+
         stripped = line_text.lstrip()
         if stripped.startswith("#"):
             # Uncomment: remove the first # we find
             hash_pos = line_text.index("#")
-            
+
             # Check if there's a space after # (common fomratting: "# code")
             if hash_pos + 1 < len(line_text) and line_text[hash_pos + 1] == " ":
                 # Remove just "# + space"
@@ -698,25 +746,25 @@ class MainWindow(QMainWindow):
         # Move cursor back to a sensible position
         editor.setCursorPosition(line, 0)
         editor.ensureLineVisible(line)
-        
+
     def _toggle_comment_selection(self, editor):
         """Toggle comments on all lines in the current selection."""
         # Get the selection boundaries
         # getSelection returns (lineFrom, indexFrom, lineTo, indexTo)
         line_from, index_from, line_to, index_to = editor.getSelection()
-        
+
         if line_from > line_to:
             line_from, line_to = line_to, line_from
-            
+
         first_line_text = editor.text(line_from)
         is_commented = first_line_text.lstrip().startswith("#")
-        
+
         # We need to modify lines from bottom to top when INSERTING text, because inserting at line N shifts all llines below it.
         # If we go top-to-bottom, line numbers would be wrong after the first insert.
         # When REMOVING text, we also go bottom-to-top to keep line numbers stable.
-        
+
         if is_commented:
-        # Uncomment all selected lines
+            # Uncomment all selected lines
             for line in range(line_to, line_from - 1, -1):
                 line_text = editor.text(line)
                 stripped = line_text.lstrip()
@@ -730,22 +778,21 @@ class MainWindow(QMainWindow):
         else:
             # Comment ll selected lines
             # Go from BOTTOM to TOP so inserting "# " doesn't shift line numbers
-            for line in range(line_to, line_from -1, -1):
+            for line in range(line_to, line_from - 1, -1):
                 editor.insertAt("# ", line, 0)
         # Restore the selection to cover all modified lines
         editor.setSelection(line_from, 0, line_to, editor.lineLength(line_to))
-                
-    
+
     def goto_line(self):
         """Open a dialog to jump to a specific line number."""
         editor = self.current_editor()
         if editor is None:
             return
-        
+
         max_lines = editor.lines()
         # editor.lines () returns the total number of lines in the document.
         # We us this a sthe maximum value for the spin box so the user can't enter a line number that doesn't exitst.
-        
+
         # QInputDialog.getInt shows a small dialog with a spin box.
         # Parameters: parent, title, label, default value, minimum, maximum
         # Returns: (value, ok) where ok is True if the user clicked ok
@@ -754,19 +801,19 @@ class MainWindow(QMainWindow):
             self,
             "Go to Line",
             f"Line number (1-{max_lines}):",
-            1, # default value shown in the spin box
-            1, # minumum value
-            max_lines, # maximum value
+            1,  # default value shown in the spin box
+            1,  # minumum value
+            max_lines,  # maximum value
         )
-        
+
         if not ok:
             return
-        
-        target_line = line_num -1
+
+        target_line = line_num - 1
         editor.setCursorPosition(target_line, 0)
         editor.ensureLineVisible(target_line)
         editor.setFocus()
-    
+
     def toggle_sidebar(self):
         """Hide/show the sidebar (side_bar + side_panel)."""
         # self.side_bar is the thin icon strip
@@ -778,10 +825,10 @@ class MainWindow(QMainWindow):
         # If showing, restore the splitter sizes so the panel has width
         if not currently_visible:
             # Give the sidebar 250px, let the editor and preview share the rest
-            self.hs_split.setSizes([250,575,575])
+            self.hs_split.setSizes([250, 575, 575])
         else:
             # Collapsing: set sidebar with to 0
-            self.hs_split.setSizes([0,575,575])
+            self.hs_split.setSizes([0, 575, 575])
 
     def toggle_preview(self):
         """Hide/Show the Markdown preview panel."""
@@ -814,7 +861,7 @@ class MainWindow(QMainWindow):
             self.save_as()
             path = getattr(editor, "path", None)
             if path is None:
-                return # User cancelled the sace dialog
+                return  # User cancelled the sace dialog
 
         else:
             self.save_file()
@@ -839,12 +886,10 @@ class MainWindow(QMainWindow):
         self.console_dock.show()
         self.python_runner.run_code(selected_text)
 
-
     def choose_interpreter(self):
         """Let the user pick a Python executable."""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Choose Python Interpreter", "",
-            "Python Executable (python.exe);;All Files (*)"
+            self, "Choose Python Interpreter", "", "Python Executable (python.exe);;All Files (*)"
         )
         if path:
             self.python_runner.set_interpreter(path)
@@ -854,6 +899,7 @@ class MainWindow(QMainWindow):
     def _save_interpreter(self, path: str):
         """Save the chosen interpreter to settings.json."""
         import json
+
         settings_path = Path(__file__).parent / "settings.json"
         settings = {}
         if settings_path.exists():
@@ -863,7 +909,9 @@ class MainWindow(QMainWindow):
 
     def _load_interpreter(self) -> str:
         """Load the saved interpreter, or default to sys.executable."""
-        import json, sys
+        import json
+        import sys
+
         settings_path = Path(__file__).parent / "settings.json"
         if settings_path.exists():
             settings = json.loads(settings_path.read_text())
@@ -871,48 +919,48 @@ class MainWindow(QMainWindow):
         return sys.executable
 
     def is_binary(self, path):
-        '''
+        """
         check if a file is binary
         :param path:
         :return:
-        '''
-        with open(path, 'rb') as f:
-            return b'\0' in f.read(1024)
+        """
+        with open(path, "rb") as f:
+            return b"\0" in f.read(1024)
 
     def set_new_tab(self, path: Path, is_new_file=False, target_group=None):
         path = Path(path) if path is not None else None
-        
+
         if is_new_file:
-            return self.new_file(target_group = target_group)
-            
+            return self.new_file(target_group=target_group)
+
         if path is None or not path.is_file():
             return None
-        
+
         if self.is_binary(path):
             self.statusBar().showMessage(
                 "Cannot Open Binary File",
                 2000,
             )
             return None
-        
+
         existing = self.tab_view.find_editor_by_path(path)
-        
+
         if existing is not None:
             self.tab_view.focus_editor(existing)
             return existing
-            
+
         is_python_file = path.suffix.lower() in {".py", ".pyw", ".pyx", "pyi", ".c"}
-        
+
         if self.python_editor_active:
             editor = PythonEditor(path=path, is_python_file=is_python_file)
         else:
             editor = MarkdownEditor(path=path, is_python_file=False)
-            
+
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             text = path.read_text(
-                encoding = "utf-8",
+                encoding="utf-8",
                 errors="replace",
             )
         except OSError as error:
@@ -923,25 +971,24 @@ class MainWindow(QMainWindow):
             )
             editor.deleteLater()
             return None
-        
+
         editor.setTextSafely(text)
         self._connect_editor(editor)
-        
+
         self.tab_view.add_editor(editor, path.name, target_group)
         self.tab_view.set_editor_tooltip(editor, str(path.absolute()))
-        
-        self.current_file=path
+
+        self.current_file = path
         self._add_to_recent_files(str(path))
-        
+
         return editor
-        
 
     def get_frame(self) -> QFrame:
         frame = QFrame()
         frame.setFrameShape(QFrame.NoFrame)
         frame.setFrameShadow(QFrame.Plain)
-        frame.setContentsMargins(0,0,0,0)
-        frame.setStyleSheet('''
+        frame.setContentsMargins(0, 0, 0, 0)
+        frame.setStyleSheet("""
             QFrame {
                 background-color: #1e1f22;
                 border-radius: 0px;
@@ -952,9 +999,8 @@ class MainWindow(QMainWindow):
             QFrame::hover {
                 color: white;
             }
-        ''')
+        """)
         return frame
-
 
     def set_up_body(self):
         # Body
@@ -971,27 +1017,22 @@ class MainWindow(QMainWindow):
         body_frame.setLayout(body)
 
         self.tab_view = MultiTabView(self)
-        self.tab_view.setContentsMargins(0,0,0,0)
-        self.tab_view.currentEditorChanged.connect(
-            self._on_current_editor_changed
-        )
-        self.tab_view.closeEditorRequested.connect(
-            self.close_editor
-        )
+        self.tab_view.setContentsMargins(0, 0, 0, 0)
+        self.tab_view.currentEditorChanged.connect(self._on_current_editor_changed)
+        self.tab_view.closeEditorRequested.connect(self.close_editor)
 
+        # editor_container = QWidget()
+        # editor_layout = QStackedWidget(editor_container)
 
-        #editor_container = QWidget()
-        #editor_layout = QStackedWidget(editor_container)
+        self.preview = QWebEngineView()
 
-        self.preview =QWebEngineView()
-        
         # --- Setup for the Sidebar
         self.side_bar = QFrame()
         self.side_bar.setFrameShape(QFrame.Shape.StyledPanel)
         self.side_bar.setFrameShadow(QFrame.Shadow.Plain)
-        self.side_bar.setStyleSheet(f'''
+        self.side_bar.setStyleSheet(f"""
             background-color: {"#1e1f22"};
-        ''')
+        """)
 
         side_bar_layout = QVBoxLayout()
         side_bar_layout.setContentsMargins(5, 15, 5, 0)
@@ -1020,7 +1061,7 @@ class MainWindow(QMainWindow):
         self.file_manager_layout.setContentsMargins(0, 0, 0, 0)
         self.file_manager_layout.setSpacing(0)
         self.file_manager = FileManager(
-            set_new_tab = self.set_new_tab,
+            set_new_tab=self.set_new_tab,
             main_window=self,
             parent=self,
         )
@@ -1182,7 +1223,9 @@ class MainWindow(QMainWindow):
 
         # Reuse the logic from FileManager.action_open_in_file_manager
         # but with the tab's path instead of a tree view index
-        import subprocess, sys
+        import subprocess
+        import sys
+
         if sys.platform == "win32":
             subprocess.Popen(f'explorer /select,"{path}"')
         elif sys.platform == "darwin":
@@ -1195,17 +1238,16 @@ class MainWindow(QMainWindow):
         tab_rect = self.tab_view.geometry()
         # geometry() returns a QRect with x, y, width, height
         # Docs: https://doc.qt.io/qt-5/qwidget.html#geometry
-        
+
         bar_width = 450
         x = tab_rect.right() - bar_width - 20
         y = tab_rect.top() + 35
-        
+
         self.find_bar.move(x, y)
         self.find_bar.resize(bar_width, self.find_bar.sizeHint().height())
-        self.find_bar.raise_() # bring to front
+        self.find_bar.raise_()  # bring to front
         # raise_() puts widget on top of siblings
-        
-    
+
     def set_cursor_pointer(self, e):
         self.setCursor(Qt.PointingHandCursor)
 
@@ -1226,52 +1268,58 @@ class MainWindow(QMainWindow):
 
     def close_editor(self, editor):
         if editor is None:
-            return 
-            
+            return
+
         if editor in self._dirty_editors:
-            path =  getattr(editor, "path", None)
+            path = getattr(editor, "path", None)
             name = path.name if path is not None else "Untitled"
-            
-            reply = QMessageBox.question(self, "Unsaved Changes", f"Save Changes to '{name}'?", QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save)
-            
+
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                f"Save Changes to '{name}'?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+
             if reply == QMessageBox.Cancel:
                 return False
-                
+
             if reply == QMessageBox.Save:
                 self.tab_view.focus_editor(editor)
                 if not self.save_file():
                     return False
-                        
+
         self._dirty_editors.discard(editor)
         self.tab_view.remove_editor(editor)
-        
+
         if hasattr(editor, "shutdown"):
             editor.shutdown()
-            
+
         editor.setParent(None)
         editor.deleteLater()
-        
+
         self.render_preview()
         return True
-    
+
     def on_file_rename(self, old_path: Path, new_path: Path, is_directory: bool = False):
         """Update every editor affected by a filesystem rename.
-        
+
         FileManager has already renamed the entry in QFileSystemModel.
         This method updates the in-memory editor metadata and the tab UI.
         """
-        
+
         old_path = Path(old_path)
         new_path = Path(new_path)
-        
+
         for editor in self.tab_view.all_editors():
             editor_path = getattr(editor, "path", None)
-            
+
             if editor_path is None:
                 continue
-                
+
             editor_path = Path(editor_path)
-            
+
             if is_directory:
                 if editor_path == old_path:
                     updated_path == new_path
@@ -1280,63 +1328,62 @@ class MainWindow(QMainWindow):
                     updated_path = new_path / relative_path
                 else:
                     continue
-            
+
             else:
                 if editor_path != old_path:
                     continue
-                    
+
                 updated_path = new_path
-                
+
             editor.path = updated_path
             editor.full_path = updated_path.absolute()
-            
+
             is_dirty = editor in self._dirty_editors
             title = updated_path.name
-            
+
             if is_dirty:
                 title = f"● {title}"
-                
+
             self.tab_view.set_editor_title(editor, title)
             self.tab_view.set_editor_tooltip(editor, str(editor.full_path))
-            
+
             if editor is self.current_editor():
                 self.current_file = updated_path
-                
+
     def close_editors_for_path(self, target_path: Path, is_directory: bool = False):
         """
         Close open editors affected by deletion.
-        
+
         Returns True when all affected editors closed successfully.
         Returns False when the uder cancels an unsaved-changes prompt.
         """
-        
+
         target_path = Path(target_path)
-            
+
         affected_editors = []
-        
+
         for editor in self.tab_view.all_editors():
             editor_path = getattr(editor, "path", None)
-            
+
             if editor_path == Path(editor_path):
                 continue
-                
+
             editor_path = Path(editor_path)
-            
+
             if is_directory:
-                is_affected = (editor_path == target_path or target_path in editor_path.parents)
+                is_affected = editor_path == target_path or target_path in editor_path.parents
             else:
                 is_affected = editor_path == target_path
-                
+
             if is_affected:
                 affected_editors.append(editor)
-                
+
         for editor in affected_editors:
             if not self.close_editor(editor):
                 return False
-                
+
         return True
-                
-    
+
     def show_hide_tab(self, e, type_):
         panels = {
             "folder": self.file_manager_frame,
@@ -1351,7 +1398,7 @@ class MainWindow(QMainWindow):
         for name, (inactive, active) in icon_map.items():
             label = self.sidebar_labels.get(name)
             if label:
-                label.setPixmap(QPixmap(inactive).scaled(QSize(25,25)))
+                label.setPixmap(QPixmap(inactive).scaled(QSize(25, 25)))
 
         target = panels.get(type_)
         if target is None:
@@ -1369,27 +1416,24 @@ class MainWindow(QMainWindow):
 
         label = self.sidebar_labels.get(type_)
         if label:
-            label.setPixmap(QPixmap(icon_map[type_][1]).scaled(QSize(25,25)))
+            label.setPixmap(QPixmap(icon_map[type_][1]).scaled(QSize(25, 25)))
         # Restore splitter sizes if the side panel was hidden (width 0)
         sizes = self.hs_split.sizes()
         if sizes and sizes[0] == 0:
             self.hs_split.setSizes([300, 550, 550])
 
+    def tree_view_context_menu(self, pos): ...
 
-    def tree_view_context_menu(self, pos):
-        ...
-
-
-    def new_file(self, target_group = None):
+    def new_file(self, target_group=None):
         """Create an untitled editor in the active group."""
-       
+
         editor = self.get_editor()
         self._connect_editor(editor)
-        
+
         self.tab_view.add_editor(editor, "Untitled", target_group)
         self.current_file = None
         self.statusBar().showMessage("Created new file", 3000)
-        
+
         return editor
 
     def open_file(self):
@@ -1398,11 +1442,13 @@ class MainWindow(QMainWindow):
         ops |= QFileDialog.DontUseNativeDialog
         new_file, _ = QFileDialog.getOpenFileName(
             self,
-    "Pick A File", "", "All Files (*);;Text Files (*.txt);;Python Files (*.py);;Markdown Files (*.md)",
-            options=ops
+            "Pick A File",
+            "",
+            "All Files (*);;Text Files (*.txt);;Python Files (*.py);;Markdown Files (*.md)",
+            options=ops,
         )
 
-        if new_file == '':
+        if new_file == "":
             self.statusBar().showMessage("Cancelled", 2000)
             return
         f = Path(new_file)
@@ -1426,7 +1472,7 @@ class MainWindow(QMainWindow):
     def save_file(self):
         """
         Save the currently focused editor.
-        
+
         An editor opened from disk has an existing 'editor.path', so it is written
         directly to that path. Only an untitled editor has path=None and must open
         the Save As dialog.
@@ -1434,25 +1480,26 @@ class MainWindow(QMainWindow):
         editor = self.current_editor()
         if editor is None:
             return False
-        
+
         path = getattr(editor, "path", None)
-        
+
         # Only untitled editors need  a user-selected destination.
         if path is None:
             return self.save_as()
-            
+
         path = Path(path)
+        self._run_ruff_before_save(editor, path)
         try:
             path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
         except OSError as error:
             QMessageBox.critical(self, "Save File", f"Could not save '{path}':\n{error}")
             return False
-            
+
         self.current_file = path
         self.mark_editor_clean(editor)
         self.statusBar().showMessage(f"Saved {path.name}", 3000)
         return True
-    
+
     def save_as(self):
         editor = self.current_editor()
 
@@ -1473,13 +1520,9 @@ class MainWindow(QMainWindow):
             return False
 
         path = Path(file_path)
-
+        self._run_ruff_before_save(editor, path)
         try:
-            path.write_bytes(
-                editor.text()
-                .replace("\r\n", "\n")
-                .encode("utf-8")
-            )
+            path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
         except OSError as error:
             QMessageBox.critical(
                 self,
@@ -1511,32 +1554,32 @@ class MainWindow(QMainWindow):
         editor = self.current_editor()
         if editor is not None:
             editor.copy()
-            
+
     def undo(self):
         editor = self.current_editor()
         if editor is not None:
             editor.undo()
-    
+
     def redo(self):
         editor = self.current_editor()
         if editor is not None:
             editor.redo()
-    
+
     def cut(self):
         editor = self.current_editor()
         if editor is not None:
             editor.cut()
-            
+
     def paste(self):
         editor = self.current_editor()
         if editor is not None:
             editor.paste()
-            
+
     def select_all(self):
         editor = self.current_editor()
         if editor is not None:
             editor.selectAll()
-    
+
     def delete_line(self):
         editor = self.current_editor()
         if editor is None:
@@ -1547,10 +1590,10 @@ class MainWindow(QMainWindow):
         total_lines = editor.lines()
         # we need to handle two cases.
         # 1. Not the last line: select from start of current line to start of next line
-        
+
         #   This includes the newline character, so th eline is fully removed
         # 2. Last line: select the entire line content (no newline after it to remove)
-        if line < total_lines -1:
+        if line < total_lines - 1:
             editor.setSelection(line, 0, line + 1, 0)
         else:
             line_len = editor.lineLength(line)
@@ -1564,13 +1607,13 @@ class MainWindow(QMainWindow):
             self.cursor_pos_label.setText("")
             self.word_count_label.setText("")
             return
-        
+
         self.current_file = getattr(editor, "path", None)
-        
+
         line, column = editor.getCursorPosition()
         self.update_cursor_position(line, column)
         self.update_word_count()
-        
+
         if isinstance(editor, MarkdownEditor):
             self.preview.show()
             self.render_preview()
@@ -1624,17 +1667,17 @@ class MainWindow(QMainWindow):
             return None
         if isinstance(old, EditorClass):
             return old
-        
+
         group = self.tab_view.group_for_editor(old)
-        
+
         if group is None:
             return None
-         
+
         index = group.indexOf(old)
         title = group.tabText(index)
         tooltip = group.tabToolTip(index)
         icon = group.tabIcon(index)
-        
+
         text = old.text()
         path = getattr(old, "path", None)
         was_dirty = old in self._dirty_editors
@@ -1649,25 +1692,24 @@ class MainWindow(QMainWindow):
         group.setTabToolTip(index, tooltip)
         group.setCurrentIndex(index)
         group.blockSignals(False)
-        
+
         if was_dirty:
             self._dirty_editors.discard(old)
             self._dirty_editors.add(new_editor)
-            
+
         if hasattr(old, "shutdown"):
             old.shutdown()
-            
+
         old.setParent(None)
         old.deleteLater()
-        
+
         new_editor.setFocus()
         self.tab_view.focus_editor(new_editor)
         return new_editor
-        
-        
+
     def _swap_editor(self, EditorClass):
         return self._convert_current_tab(EditorClass)
-        
+
     def show_find_bar(self):
         """Show the find bar (Ctrl+F mode)."""
         # Pre-fill with selected text if any
@@ -1677,7 +1719,6 @@ class MainWindow(QMainWindow):
         self.find_bar.show_find()
         self._position_find_bar()
 
-        
     def show_replace_bar(self):
         """Show the find+replace bar (Ctrl+H mode)."""
         editor = self.current_editor()
@@ -1686,7 +1727,6 @@ class MainWindow(QMainWindow):
         self.find_bar.show_replace()
         self._position_find_bar()
 
-        
     def _do_find_next(self, text, case_sensitive, whole_word, regex):
         """Search forward from the current cursor position."""
         editor = self.current_editor()
@@ -1697,18 +1737,18 @@ class MainWindow(QMainWindow):
         # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a2d0e8b6e0a3e3a9c0e3a3e3a3e3a3e3a
 
         editor.findFirst(
-            text,           # the search string or regex
-            regex,          # is it a regex?
-            case_sensitive, # case-sensitive?
-            whole_word,     # whole-word match only?
-            True,           # wrap around to top when reaching bottom?
-            True,           # search forward?
-            line,           # start line
-            index,          # start column
-            True,           # show the match (scroll to it)?
-            False           # POSIX regex mode (False = use Python regex)
+            text,  # the search string or regex
+            regex,  # is it a regex?
+            case_sensitive,  # case-sensitive?
+            whole_word,  # whole-word match only?
+            True,  # wrap around to top when reaching bottom?
+            True,  # search forward?
+            line,  # start line
+            index,  # start column
+            True,  # show the match (scroll to it)?
+            False,  # POSIX regex mode (False = use Python regex)
         )
-        
+
     def _do_find_prev(self, text, case_sensitive, whole_word, regex):
         """Search backward from the current cursor position."""
         editor = self.current_editor()
@@ -1722,88 +1762,82 @@ class MainWindow(QMainWindow):
             regex,
             case_sensitive,
             whole_word,
-            True,    # wrap around
-            False,   # search BACKWARD
+            True,  # wrap around
+            False,  # search BACKWARD
             line,
             index,
-            True,    # show the match
-            False
+            True,  # show the match
+            False,
         )
-        
+
     def _do_replace(self, find_text, replace_text, case_sensitive, whole_word, regex):
         """Replace the currently selected match, then find the next one."""
         editor = self.current_editor()
         if editor is None:
-            return 
+            return
         # If there's a selection and it matches the search text, replace it
         if editor.hasSelectedText():
             editor.replace(replace_text)
-            # replace() swaps the currently selected Tect with replace_text 
+            # replace() swaps the currently selected Tect with replace_text
             # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a
         # Find the next match
         self._do_find_next(find_text, case_sensitive, whole_word, regex)
-        
+
     def _do_replace_all(self, find_text, replace_text, case_sensitive, whole_word, regex):
         """Replace all occurrences in the current document."""
         editor = self.current_editor()
         if editor is None:
             return
-        
+
         # Move cursor to the start of the Document
         # sendScintilla sends a raw Scintilla message
         # SCI_DOCUMENTSTART = 2318 moves the cursor to position 0
         # Docs: https://www.scintilla.org/ScintillaDoc.html#SCI_DOCUMENTSTART
-        editor.setCursorPosition(0,0)
-        
+        editor.setCursorPosition(0, 0)
+
         count = 0
         found = editor.findFirst(
-            find_text, regex, case_sensitive, whole_word,
-            False,      # don't warp. We start from the top then go down
-            True,       # forward
-            0, 0,        # start at line 0, col 0
-            True, False
+            find_text,
+            regex,
+            case_sensitive,
+            whole_word,
+            False,  # don't warp. We start from the top then go down
+            True,  # forward
+            0,
+            0,  # start at line 0, col 0
+            True,
+            False,
         )
-        
         while found:
             editor.replace(replace_text)
             count += 1
             # findNext continues from where the last match was
             # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a
             found = editor.findNext()
-        
         self.statusBar().showMessage(f"Replace {count} occurrences", 3000)
-        
+
     def closeEvent(self, event):
         for editor in list(self.tab_view.all_editors()):
             if not self.close_editor(editor):
                 event.ignore()
                 return
-
         if hasattr(self, "terminal"):
             self.terminal.stop()
-
-        if (
-            hasattr(self, "python_runner") and
-            self.python_runner
-        ):
+        if hasattr(self, "python_runner") and self.python_runner:
             self.python_runner.stop()
-
         if hasattr(self, "settings"):
-            self.settings.setValue(
-                "recent_files",
-                self.recent_files,
-            )
+            self.settings.setValue("recent_files", self.recent_files)
 
         event.accept()
-    
+
     def check_for_updates(self):
         """
         Check GitHub Releases API for a newer version.
         Runs in a background thread so it doesn't freeze the GUI.
         """
-        import urllib.request
         import json
         import threading
+        import urllib.request
 
         # The GitHub API endpoint for your latest release
         # Replace YOUR_USERNAME and MarkdownEditor with your actual values
@@ -1839,9 +1873,9 @@ class MainWindow(QMainWindow):
                     # main Qt event loop thread. This is important because
                     # you can't create QDialogs from a background thread.
                     # Docs: https://doc.qt.io/qt-5/qtimer.html#singleShot
-                    QTimer.singleShot(0, lambda: self._show_update_dialog(
-                        latest_version, download_url
-                    ))
+                    QTimer.singleShot(
+                        0, lambda: self._show_update_dialog(latest_version, download_url)
+                    )
 
             except Exception:
                 # Network error, timeout, or API rate limit — fail silently
@@ -1864,14 +1898,15 @@ class MainWindow(QMainWindow):
             f"You are currently running {APP_VERSION}.\n\n"
             f"Click OK to open the download page in your browser.",
             QMessageBox.Ok | QMessageBox.Cancel,
-            QMessageBox.Ok
+            QMessageBox.Ok,
         )
-
         if reply == QMessageBox.Ok:
             # webbrowser.open opens the URL in the user's default browser
             # Docs: https://docs.python.org/3/library/webbrowser.html#webbrowser.open
             import webbrowser
+
             webbrowser.open(download_url)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
