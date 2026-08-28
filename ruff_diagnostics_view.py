@@ -29,16 +29,34 @@ class RuffDiagnosticView:
         self._define_visuals()
         
     def _define_visuals(self):
-        """Register reserved indicator/marker Ids and their colours once."""
+        """Reserve QScintilla IDs and assign visible Ruff colors/styles."""
+        
+        # Indicators paint text ranges in the editor body. They are independent of marker
+        # IDs, which paint optional symbols in a seperate gutter margin.
         self.editor.indicatorDefine(QsciScintilla.SquiggleIndicator, self.ERROR_INDICATOR)
         self.editor.setIndicatorForegroundColor(QColor("#ff5c57"), self.ERROR_INDICATOR)
+        
         self.editor.indicatorDefine(QsciScintilla.SquiggleIndicator, self.WARNING_INDICATOR)
         self.editor.setIndicatorForegroundColor(QColor("#ffbd2e"), self.WARNING_INDICATOR)
-        self.editor.indicatorDefine(QsciScintilla.DotBoxIndicator, self.INFO_INDICATOR)
+        
+        # Use a blue squiggle rather than DotBotIndicator. A DotBox is to subtle against the current dark theme
+        # and made information/hint diagnostics look as if they were missing.
+        self.editor.indicatorDefine(QsciScintilla.SquiggleIndicator, self.INFO_INDICATOR)
         self.editor.setIndicatorForegroundColor(QColor("#55aaff"), self.INFO_INDICATOR)
+        
+        # FIX_INDICATOR is visually distinct because it marks diagnostics for which 
+        # the later codeAction implementation can offer an automatic resolution.
         self.editor.indicatorDefine(QsciScintilla.RoundBoxIndicator, self.FIX_INDICATOR)
         self.editor.setIndicatorForegroundColor(QColor("#a6e22e"), self.FIX_INDICATOR)
-        for marker, color in ((self.ERROR_MARKER, "#ff5c57"), (self.WARNING_MARKER, "#ffbd2e"), (self.INFO_MARKER, "#55aaff"), (self.FIX_MARKER, "#a6e22e")):
+        
+        # Marker IDs are seperate from indicator IDs even when numerical values happen to
+        # be the same. Markers require a QScintilla SymbolMargin to show.
+        for marker, color in (
+            (self.ERROR_MARKER, "#ff5c57"),
+            (self.WARNING_MARKER, "#ffbd2e"),
+            (self.INFO_MARKER, "#55aaff"),
+            (self.FIX_MARKER, "#a6e22e"),
+        ):
             self.editor.markerDefine(QsciScintilla.Circle, marker)
             self.editor.setMarkerForegroundColor(QColor(color), marker)
             self.editor.setMarkerBackgroundColor(QColor(color), marker)

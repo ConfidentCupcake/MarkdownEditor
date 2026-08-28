@@ -63,7 +63,7 @@ class TerminalWidget(QWidget):
         """
         QComboBox {
             background-color: #2c313a; color: #dcdfe4;
-            border: 1px solif #3d324d; border-radius: 3px;
+            border: 1px solid #3d324d; border-radius: 3px;
             padding: 3px 8px; min-width: 100px;
         }
         QComboBox:hover { border: 1px solid #4b5263; }
@@ -166,7 +166,7 @@ class TerminalWidget(QWidget):
                 shells.append(("Bash", bash, ["-i"]))
             
             zsh = shutil.which("zsh")
-            if bash:
+            if zsh:
                 shells.append(("Zsh", zsh, ["-i"]))
                 
             fish = shutil.which("fish")

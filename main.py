@@ -18,9 +18,10 @@ from markdowneditor import MarkdownEditor
 from multi_tab_view import MultiTabView
 from python_runner import PythonRunner
 from pythoneditor import PythonEditor
+from ruff_lsp_client import RuffLspClient
 from terminal_widget import TerminalWidget
 
-APP_VERSION = "v1.9.0"
+APP_VERSION = "v1.9.1"
 
 
 def resource_path(relative_path):
@@ -80,6 +81,16 @@ class MainWindow(QMainWindow):
         else:
             # Running from source — sys.executable is the real Python
             self.python_runner.set_interpreter(self._load_interpreter())
+        # Create exactly one persistent Ruff server after the selected Python interpreter is known.
+        # The interpreter must be the same environment where 'python -m ruff --version' succeeds.
+        self.ruff_lsp_client = RuffLspClient(
+            python_executable=self.python_runner.interpreter, workspace_root=Path.cwd(), parent=self
+        )
+        # Infrastructure errors must be visible; otherwise a missing Ruff package or failed server
+        # startup looks exactly like "no diagnostics" to the user.
+        self.ruff_lsp_client.server_error.connect(self._on_ruff_lsp_error)
+        self.ruff_lsp_client.start()
+
         self.console = None  # will be created in set_up_console_dock
         self.python_editor_active = False
         self.current_file = None
@@ -112,6 +123,7 @@ class MainWindow(QMainWindow):
             self.file_manager.setRootIndex(self.file_manager.model.index(home))
 
     def init_ui(self):
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu-shader-disk-cache"
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(100)
@@ -260,12 +272,35 @@ class MainWindow(QMainWindow):
         label.mousePressEvent = lambda e: self.show_hide_tab(e, name)
         return label
 
-    def get_editor(self, path: Path = None, is_python_file=True) -> QsciScintilla:
-        if self.python_editor_active:
-            self.editor = PythonEditor(path=path, is_python_file=is_python_file)
-        else:
-            self.editor = MarkdownEditor(path=path, is_python_file=is_python_file)
-        return self.editor
+    def get_editor(self, path: Path = None, is_python_file=None) -> QsciScintilla:
+        """Create the correct editor type for this individual document."""
+
+        # A saved file chooses its editor based on file extension. This prevents
+
+        # a .py file from being opened as MarkdownEditor, where Ruff cannot run.
+
+        if path is not None:
+            path = Path(path)
+
+            is_python_file = path.suffix.lower() in {".py", ".pyw", ".pyi"}
+
+        # An untitled document has no extension yet, so use the active editor mode.
+
+        elif is_python_file is None:
+            is_python_file = self.python_editor_active
+
+        if is_python_file:
+            # A .py tab recieves the shared language-server client. Each tab creats its own RuffLspController,
+
+            # but all controllers share this one QProcess
+
+            return PythonEditor(
+                path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+            )
+
+        # Markdown documents never open an LSP Python document
+
+        return MarkdownEditor(path=path, is_python_file=False)
 
     def current_editor(self):
         """Return the editor focused in the active tab group."""
@@ -286,35 +321,12 @@ class MainWindow(QMainWindow):
         if isinstance(editor, PythonEditor):
             editor.goto_definition_requested.connect(self._open_file_at_position)
 
-    def _run_ruff_before_save(self, editor, target_path: Path):
-        """Apply selected save policy in memory before the existing disk write."""
-        if not isinstance(editor, PythonEditor):
-            return
-        editor.ruff_service.python_executable = self.python_runner.interpreter
-        if self.ruff_save_mode == "safe_format":
-            editor.apply_safe_fixes_with_ruff(target_path)
-            editor.format_with_ruff(target_path)
+    def _on_ruff_lsp_error(self, message: str):
+        """Expose Ruff LSP startup and protocol failures to the user."""
 
-    def format_current_document(self):
-        """Format only the focused Python tab; do not save automatically"""
-        editor = self.current_editor()
-        if isinstance(editor, PythonEditor):
-            editor.ruff_service.python_executable = self.python_runner.interpreter
-            editor.format_with_ruff()
+        print(f"Ruff LSP error {message}")
 
-    def organize_current_imports(self):
-        """Organize imports only in the focused Python tab; do not save automatically."""
-        editor = self.current_editor()
-        if isinstance(editor, PythonEditor):
-            editor.ruff_service.python_executable = self.python_runner.interpreter
-            editor.organize_imports_with_ruff()
-
-    def apply_safe_ruff_fixes(self):
-        """Apply only safe Ruff fixes to focused Python source; do not save automatically."""
-        editor = self.current_editor()
-        if isinstance(editor, PythonEditor):
-            editor.ruff_service.python_executable = self.python_runner.interpreter
-            editor.apply_safe_fixes_with_ruff(editor.full_path or Path.cwd() / "untitled.py")
+        self.statusBar().showMessage(message, 8_000)
 
     def _on_editor_cursor_changed(self, editor, line: int, column: int):
         """Update the status bar only for the focused editor."""
@@ -443,22 +455,6 @@ class MainWindow(QMainWindow):
         goto_definition_action.setShortcut("F12")
         goto_definition_action.setShortcutContext(Qt.ApplicationShortcut)
         goto_definition_action.triggered.connect(self._trigger_goto_definition)
-
-        edit_menu.addSeparator()
-        format_action = edit_menu.addAction("Format Document")
-        format_action.setShortcut("Ctrl+Alt+L")
-        format_action.setShortcutContext(Qt.ApplicationShortcut)
-        format_action.triggered.connect(self.format_current_document)
-
-        imports_actions = edit_menu.addAction("Organize Imports")
-        imports_actions.setShortcut("Ctrl+Alt+O")
-        imports_actions.setShortcutContext(Qt.ApplicationShortcut)
-        imports_actions.triggered.connect(self.organize_current_imports)
-
-        fix_action = edit_menu.addAction("Apply Safe Ruff Fixes")
-        fix_action.setShortcut("Ctrl+Alt+F")
-        fix_action.setShortcutContext(Qt.ApplicationShortcut)
-        fix_action.triggered.connect(self.apply_safe_ruff_fixes)
 
         # Mode menu
         mode_menu = menu_bar.addMenu("Mode")
@@ -630,7 +626,6 @@ class MainWindow(QMainWindow):
 
             if path is None:
                 continue
-            self._run_ruff_before_save(editor, path)
             try:
                 path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
             except OSError as error:
@@ -929,32 +924,25 @@ class MainWindow(QMainWindow):
 
     def set_new_tab(self, path: Path, is_new_file=False, target_group=None):
         path = Path(path) if path is not None else None
-
         if is_new_file:
             return self.new_file(target_group=target_group)
-
         if path is None or not path.is_file():
             return None
-
         if self.is_binary(path):
             self.statusBar().showMessage(
                 "Cannot Open Binary File",
                 2000,
             )
             return None
-
         existing = self.tab_view.find_editor_by_path(path)
-
         if existing is not None:
             self.tab_view.focus_editor(existing)
             return existing
-
-        is_python_file = path.suffix.lower() in {".py", ".pyw", ".pyx", "pyi", ".c"}
-
-        if self.python_editor_active:
-            editor = PythonEditor(path=path, is_python_file=is_python_file)
-        else:
-            editor = MarkdownEditor(path=path, is_python_file=False)
+        
+        # IMPORTANT:
+        # Do not select PythonEditor/MarkdownEditor here based on the global python_editor_active flag.
+        # Existing files must be selected from their own extensions, not from whichever editor mode was last active.
+        editor = self.get_editor(path=path)
 
         try:
             text = path.read_text(encoding="utf-8")
@@ -1488,7 +1476,6 @@ class MainWindow(QMainWindow):
             return self.save_as()
 
         path = Path(path)
-        self._run_ruff_before_save(editor, path)
         try:
             path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
         except OSError as error:
@@ -1520,7 +1507,6 @@ class MainWindow(QMainWindow):
             return False
 
         path = Path(file_path)
-        self._run_ruff_before_save(editor, path)
         try:
             path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
         except OSError as error:
@@ -1818,8 +1804,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         for editor in list(self.tab_view.all_editors()):
-            if not self.close_editor(editor):
-                event.ignore()
+            if isinstance(editor, PythonEditor):
+                editor.shutdown()
                 return
         if hasattr(self, "terminal"):
             self.terminal.stop()
@@ -1828,7 +1814,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "settings"):
             self.settings.setValue("recent_files", self.recent_files)
 
-        event.accept()
+        self.ruff_lsp_client.shutdown()
+
+        super().closeEvent(event)
 
     def check_for_updates(self):
         """

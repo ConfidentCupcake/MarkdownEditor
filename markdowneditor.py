@@ -1,3 +1,4 @@
+import sys
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from PyQt5.Qsci import *
@@ -21,7 +22,8 @@ class MarkdownEditor(QsciScintilla):
         # encoding
         self.setUtf8(True)
         # font
-        self.window_font = QFont("sans-serif")
+        self.window_font = QFont()
+        self.window_font.setStyleHint(QFont.SansSerif)
         self.window_font.setPointSize(13)
         self.setFont(self.window_font)
 
@@ -34,7 +36,7 @@ class MarkdownEditor(QsciScintilla):
         self.setIndentationsUseTabs(False)
         self.setAutoIndent(True)
 
-        self.setEolMode(QsciScintilla.EolWindows)
+        self.setEolMode(QsciScintilla.EolUnix if sys.platform != "win32" else QsciScintilla.EolWindows)
         self.setEolVisibility(False)
 
         # autocomplete

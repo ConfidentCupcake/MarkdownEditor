@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import shlex
 
 from PyQt5.QtCore import QObject, QProcess, QProcessEnvironment, pyqtSignal
 
@@ -145,4 +146,4 @@ class PythonRunner(QObject):
         self.process.setProcessEnvironment(env)
         self.process.setWorkingDirectory(os.path.expanduser("~"))
         
-        self.process.start(self.interpreter, ["-m", "pip"] + args.split())
+        self.process.start(self.interpreter, ["-m", "pip"] + shlex.split(args))
