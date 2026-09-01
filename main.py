@@ -20,8 +20,9 @@ from python_runner import PythonRunner
 from pythoneditor import PythonEditor
 from ruff_lsp_client import RuffLspClient
 from terminal_widget import TerminalWidget
+from code_inteligence.code_outline import CodeOutlineTree
 
-APP_VERSION = "v1.9.1"
+APP_VERSION = "v1.9.2"
 
 
 def resource_path(relative_path):
@@ -150,6 +151,11 @@ class MainWindow(QMainWindow):
                 QMenuBar { background-color: #2d2d2d; color: floralwhite; }
                 QTabWidget { background-color: #1e1f22; color: #d3d3d3; }
             """)
+            
+        self._outline_debounce = QTimer(self)
+        self._outline_debounce.setSingleShot(True)
+        self._outline_debounce.setInterval(500)
+        self._outline_debounce.timeout.connect(self._outline_debounce.start)
 
         self.set_up_menu()
         self.set_up_body()
@@ -187,7 +193,12 @@ class MainWindow(QMainWindow):
         self.show()
 
         QTimer.singleShot(2000, self.check_for_updates)
-
+    
+    def _update_outline(self):
+        editor = self.current_editor()
+        if isinstance(editor, PythonEditor):
+            self.outline_tree.update_outline(editor.text())
+        
     def update_word_count(self):
         """Update the word/character count in the status bar."""
         editor = self.current_editor()
@@ -274,32 +285,21 @@ class MainWindow(QMainWindow):
 
     def get_editor(self, path: Path = None, is_python_file=None) -> QsciScintilla:
         """Create the correct editor type for this individual document."""
-
         # A saved file chooses its editor based on file extension. This prevents
-
         # a .py file from being opened as MarkdownEditor, where Ruff cannot run.
-
         if path is not None:
             path = Path(path)
-
             is_python_file = path.suffix.lower() in {".py", ".pyw", ".pyi"}
-
         # An untitled document has no extension yet, so use the active editor mode.
-
         elif is_python_file is None:
             is_python_file = self.python_editor_active
-
         if is_python_file:
             # A .py tab recieves the shared language-server client. Each tab creats its own RuffLspController,
-
             # but all controllers share this one QProcess
-
             return PythonEditor(
                 path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
             )
-
         # Markdown documents never open an LSP Python document
-
         return MarkdownEditor(path=path, is_python_file=False)
 
     def current_editor(self):
@@ -323,9 +323,7 @@ class MainWindow(QMainWindow):
 
     def _on_ruff_lsp_error(self, message: str):
         """Expose Ruff LSP startup and protocol failures to the user."""
-
         print(f"Ruff LSP error {message}")
-
         self.statusBar().showMessage(message, 8_000)
 
     def _on_editor_cursor_changed(self, editor, line: int, column: int):
@@ -943,6 +941,11 @@ class MainWindow(QMainWindow):
         # Do not select PythonEditor/MarkdownEditor here based on the global python_editor_active flag.
         # Existing files must be selected from their own extensions, not from whichever editor mode was last active.
         editor = self.get_editor(path=path)
+            
+        if isinstance(editor, PythonEditor):
+            self.outline_tree.update_outline(editor.text())
+        else:
+            self.outline_tree.clear()        
 
         try:
             text = path.read_text(encoding="utf-8")
@@ -1038,6 +1041,26 @@ class MainWindow(QMainWindow):
         self.sidebar_labels["search"] = search_label
         side_bar_layout.addWidget(search_label)
         self.side_bar.setLayout(side_bar_layout)
+        
+        outline_label = self.get_sidebar_label("icons/code.png", "outline")
+        self.sidebar_labels["outline"] = outline_label
+        side_bar_layout.addWidget(outline_label)        
+        
+        self.outline_tree = CodeOutlineTree()
+        self.outline_tree.symbol_clicked.connect(self._goto_symbol)
+
+        self.outline_frame = self.get_frame()
+        outline_layout = QVBoxLayout()
+        outline_layout.setContentsMargins(0, 0, 0, 0)
+        outline_layout.setSpacing(0)
+
+
+        outline_label = QLabel("Outline")
+        outline_label.setStyleSheet("color: #636d83; padding: 4px 8px; font-size: 12px;")
+        outline_layout.addWidget(outline_label)
+        outline_layout.addWidget(self.outline_tree)
+        self.outline_frame.setLayout(outline_layout)
+
 
         # split view
         self.hs_split = QSplitter(Qt.Orientation.Horizontal)
@@ -1057,10 +1080,11 @@ class MainWindow(QMainWindow):
         # setup layout
         self.file_manager_layout.addWidget(self.file_manager)
         self.file_manager_frame.setLayout(self.file_manager_layout)
-
+             
+        
         # search manager
         self.search_frame = self.get_frame()
-
+        
         search_layout = QVBoxLayout()
         search_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         search_layout.setContentsMargins(0, 10, 0, 0)
@@ -1113,6 +1137,7 @@ class MainWindow(QMainWindow):
         self.side_panel.setMaximumWidth(450)  # was 400 — give more room
         self.side_panel.addWidget(self.file_manager_frame)
         self.side_panel.addWidget(self.search_frame)
+        self.side_panel.addWidget(self.outline_frame)        
 
         body.addWidget(self.side_bar)
         self.hs_split.addWidget(self.side_panel)
@@ -1124,7 +1149,15 @@ class MainWindow(QMainWindow):
         body_frame.setLayout(body)
 
         self.setCentralWidget(body_frame)
-
+    
+    def _goto_symbol(self, line:int, column:int):
+        """Jump to a symbol in the current editor."""
+        editor = self.current_editor()
+        if editor is not None:
+            editor.setCursorPosition(line, column)
+            editor.ensureLineVisible(line)
+            editor.setFocus()            
+        
     def _show_tab_context_menu(self, pos: QPoint):
         """
         Show a context menu when the user right-clicks a tab.
@@ -1376,11 +1409,13 @@ class MainWindow(QMainWindow):
         panels = {
             "folder": self.file_manager_frame,
             "search": self.search_frame,
+            "outline": self.outline_frame,            
         }
         # Update icoon states. Reset all to gray, then set active to blue
         icon_map = {
             "folder": (resource_path("icons/folder.png"), resource_path("icons/folder-active.png")),
             "search": (resource_path("icons/search.png"), resource_path("icons/search-active.png")),
+            "outline": ("icons/code.png", "icons/code-active.png"),
         }
         # Reset all sidebar icons to inactive gray
         for name, (inactive, active) in icon_map.items():
@@ -1600,6 +1635,12 @@ class MainWindow(QMainWindow):
         self.update_cursor_position(line, column)
         self.update_word_count()
 
+        if isinstance(editor, PythonEditor):
+            self.outline_tree.update_outline(editor.text())
+        else:
+            self.outline_tree.clear()
+                
+
         if isinstance(editor, MarkdownEditor):
             self.preview.show()
             self.render_preview()
@@ -1749,12 +1790,13 @@ class MainWindow(QMainWindow):
             case_sensitive,
             whole_word,
             True,  # wrap around
-            False,  # search BACKWARD
+            True,  # search BACKWARD
             line,
             index,
             True,  # show the match
             False,
-        )
+        )        
+        print("Found Previous")        
 
     def _do_replace(self, find_text, replace_text, case_sensitive, whole_word, regex):
         """Replace the currently selected match, then find the next one."""

@@ -72,13 +72,8 @@ class PythonEditor(QsciScintilla):
         self.setCaretWidth(2)
 
         if self.is_python_file:
-
-            
-
             self.ruff_lsp = None
-
             if ruff_lsp_client is not None:
-
                 self.ruff_lsp = RuffLspController(editor=self, client=ruff_lsp_client, parent=self)
 
 
@@ -311,18 +306,14 @@ class PythonEditor(QsciScintilla):
         """Insert a newline and apply the exact indentation for the new line."""
 
         # Capture text only to the left of the cursor. When Enter splits a line,
-        # this is the only text that determines whether the current statement
-        # opens a suite and what the new line's indentation should be.
+        # this is the only text that determines the new line's indentation.
         old_line, old_index = self.getCursorPosition()
         left_of_caret = self.text(old_line)[:old_index]
 
-        # The helper returns either:
-        # - the current indentation for an ordinary statement, or
-        # - current indentation plus one level for a suite-opening colon.
-        #
-        # Examples:
-        # "    return False" -> "    "
-        # "    while ok:"     -> "        "
+        # The helper returns:
+        # - dedented indent for a terminal statement (return/raise/break/continue/pass)
+        # - current indent + one level for a suite-opening colon
+        # - current indent for an ordinary statement
         desired_indent = indentation_for_new_line(
             left_of_caret,
             use_tabs=self.indentationsUseTabs(),
@@ -331,30 +322,25 @@ class PythonEditor(QsciScintilla):
 
         self.beginUndoAction()
         try:
-            # SCI_NEWLINE = 2329.
-            # It inserts a native Scintilla newline using the editor's configured
-            # EOL mode. Unlike the former super().keyPressEvent(...) attempt, it
-            # reliably changes QScintilla's document/cursor state in this handler.
+            # SCI_NEWLINE = 2329. Inserts a native Scintilla newline using the
+            # configured EOL mode. This is the ONLY newline insertion in this
+            # method — do not call it a second time.
             self.SendScintilla(2329)
-
-            # SCI_NEWLINE is a raw Scintilla newline action. It does not provide
-            # the indentation behavior relied upon by the former implementation.
-            # Therefore apply desired_indent for EVERY ordinary Enter keypress,
-            # not only after suite-opening lines.
+            
             new_line, _new_index = self.getCursorPosition()
-
+            
+            new_line_text = self.text(new_line)
+            existing_indent_length = len(new_line_text) - len(new_line_text.lstrip(" \t"))
+            if existing_indent_length:
+                self.setSelection(new_line, 0, new_line, existing_indent_length)
+                self.replace("")
+            
             if desired_indent:
-                # Insert only at the start of the new line. Do not remove leading
-                # whitespace from the rest of the split line: if Enter was pressed
-                # in the middle of a line, text on the right may have its own
-                # meaningful whitespace.
                 self.insertAt(desired_indent, new_line, 0)
-
-            # Place the caret immediately after the preserved/extra indentation.
+                
             self.setCursorPosition(new_line, len(desired_indent))
         finally:
-            # One Ctrl+Z reverses both the newline and indentation insertion.
-            self.endUndoAction()
+            self.endUndoAction()        
     
     
     def keyPressEvent(self, e: QKeyEvent) -> None:
@@ -480,17 +466,11 @@ class PythonEditor(QsciScintilla):
     def shutdown(self):
         self._shutting_down = True
         self._loading_text = True
-
         
-
         # Sends didClose and clears only this document's QScintilla indicators.
-
         # It does NOT shut down the shared RuffLspClient owned by MainWindow.
-
         if self.ruff_lsp is not None:
-
             self.ruff_lsp.shutdown()
-
             
         if hasattr(self, "auto_completer"):
             self.auto_completer.requestInterruption()
