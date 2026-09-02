@@ -1,6 +1,6 @@
 {
   "theme": {
-    "name": "default-dark",
+    "name": "customdark-pycharm",
     "version": "1.0",
     "syntax": [
       {
@@ -113,7 +113,7 @@
       },
       {
         "classes": {
-          "color": "#ff0000",
+          "color": "#ea5a5a",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",
@@ -137,19 +137,19 @@
       },
       {
         "decorator": {
-          "color": "#b3ae60",
+          "color": "#bbb529",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",
             "font-size": 13,
-            "font-weight": "bold",
+            "font-weight": "normal",
             "italic": false
           }
         }
       },
       {
         "operators": {
-          "color": "#bcbec4",
+          "color": "#ffffff",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",
@@ -161,7 +161,7 @@
       },
       {
         "magic_methods": {
-          "color": "#0082ff",
+          "color": "#c857cd",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",
@@ -197,7 +197,7 @@
       },
       {
         "builtins": {
-          "color": "#8621ff",
+          "color": "#bcbec4",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",
@@ -233,7 +233,7 @@
       },
       {
         "instance_field": {
-          "color": "#8621ff",
+          "color": "#bcbec4",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",
@@ -257,7 +257,7 @@
       },
       {
         "static_field": {
-          "color": "#ff00db",
+          "color": "#bcbec4",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",
@@ -269,7 +269,7 @@
       },
       {
         "static_method": {
-          "color": "#41a5ff",
+          "color": "#8621ff",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",
@@ -305,7 +305,7 @@
       },
       {
         "comma": {
-          "color": "#ff8000",
+          "color": "#bcbec4",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",
@@ -318,6 +318,18 @@
       {
         "module_name": {
           "color": "#bcbec4",
+          "paper-color": "#1e1f22",
+          "font": {
+            "family": "JetBrains Mono",
+            "font-size": 13,
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "docstring": {
+          "color": "#5f826b",
           "paper-color": "#1e1f22",
           "font": {
             "family": "JetBrains Mono",

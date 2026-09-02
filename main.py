@@ -911,6 +911,28 @@ class MainWindow(QMainWindow):
             return settings.get("interpreter", sys.executable)
         return sys.executable
 
+    def _load_settings(self) -> dict:
+        """
+        Merge settings.json and QSettings into one flat dictionary.
+        
+        The App historically stores settings in TWO places:
+            - settings.json (next to main.py) -> only the interpreter written by _save_interpreter().
+              Kept as JSON because it must be readable before QApplication exists and easy to hand-edit.
+            - QSettings("CodeEditor", "CodeEditor") -> registry/Ini keys like "ruff_save_mode" and "recent_files".
+            Chosen by Qt for crash safe incremental writes.
+        """
+        
+        # --- settings.json side (interpreter only) --- #
+        settings_path = Path(__file__).parent / "settings.json"
+        data = {}
+        if settings_path.exists():
+            try:
+                data = json.loads(settings_path.read_text())
+            except json.JSONDecodeError:
+                # A corrupted settings.jsón must never crash the app -- fallthrough with an empty dict and the defaults below
+                pass
+
+        
     def is_binary(self, path):
         """
         check if a file is binary

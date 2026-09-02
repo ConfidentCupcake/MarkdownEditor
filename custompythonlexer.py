@@ -23,6 +23,814 @@ def _resource_path(relative_path):
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Common stdlib module names. They are rendered grey in PyCharm (module
+# references), so we piggyback on the builtins set (which is also grey).
+_STDLIB_MODULES = frozenset((
+    "os", "sys", "re", "json", "math", "time", "datetime", "pathlib",
+    "typing", "collections", "functools", "itertools", "subprocess",
+    "threading", "shutil", "glob", "random", "logging", "io", "abc",
+    "enum", "copy", "string", "textwrap", "uuid", "socket", "http",
+    "urllib", "platform", "ctypes", "zipfile", "argparse", "signal",
+    "queue", "tempfile", "traceback", "unittest", "sqlite3", "hashlib",
+    "base64", "struct", "codecs", "contextlib", "dataclasses", "inspect",
+    "importlib", "warnings", "statistics", "decimal", "fractions",
+    "array", "bisect", "heapq", "operator", "pprint", "weakref",
+))
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python fallback for lexer_fast.pyx (identical styling logic).
+# Used only when the Cython module is not compiled. Kept in sync with
+# lexer_fast.pyx - if you change one, change the other.
+# ---------------------------------------------------------------------------
+
+def _py_pack_state(in_string, in_comment, triple, string_delim, in_fstring,
+                   escape, in_fexpr, fexpr_depth, is_docstring,
+                   expect_docstring, at_class_body):
+    state = 0
+    if in_string: state |= 1
+    if in_comment: state |= 2
+    if triple: state |= 4
+    if string_delim == 34: state |= 8
+    if in_fstring: state |= 16
+    if escape: state |= 32
+    if in_fexpr: state |= 64
+    state |= (fexpr_depth & 7) << 7
+    if is_docstring: state |= 1024
+    if expect_docstring: state |= 2048
+    if at_class_body: state |= 4096
+    return state
+
+
+def _py_unpack_state(state):
+    return (
+        1 if (state & 1) else 0,
+        1 if (state & 2) else 0,
+        1 if (state & 4) else 0,
+        34 if (state & 8) else 39,
+        1 if (state & 16) else 0,
+        1 if (state & 32) else 0,
+        1 if (state & 64) else 0,
+        (state >> 7) & 7,
+        1 if (state & 1024) else 0,
+        1 if (state & 2048) else 0,
+        1 if (state & 4096) else 0,
+    )
+
+
+def _py_skip_string(text, i, limit, delim, triple):
+    """text is bytes; delim is a 1-char latin-1 string."""
+    escape = False
+    length = len(text)
+    while i < limit:
+        c = text[i:i + 1].decode("latin-1")
+        if escape:
+            escape = False
+            i += 1
+            continue
+        if c == "\\":
+            escape = True
+            i += 1
+            continue
+        if triple:
+            if c == delim:
+                if i + 2 < length and text[i + 1:i + 2].decode("latin-1") == delim \
+                        and text[i + 2:i + 3].decode("latin-1") == delim:
+                    return i + 3
+                i += 1
+                continue
+            i += 1
+            continue
+        if c == delim:
+            return i + 1
+        if c in "\n\r":
+            return i
+        i += 1
+    return i
+
+
+def _py_compute_state(text, target_pos):
+    """Scan from byte 0 to target_pos and return the packed lexer state.
+    `text` must be a bytes object; all positions/lengths are byte-based."""
+    target_pos = min(target_pos, len(text))
+    length = len(text)
+    i = 0
+    in_string = in_comment = triple_string = 0
+    string_delim = ""
+    in_fstring = escape_next = in_fexpr = fexpr_depth = is_docstring = 0
+    bracket_depth = pending_def = pending_class = 0
+    expect_docstring = at_class_body = 0
+
+    while i < target_pos:
+        c = text[i:i + 1].decode("latin-1")
+
+        if in_fexpr:
+            if c == "}":
+                fexpr_depth -= 1
+                if fexpr_depth <= 0:
+                    fexpr_depth = 0
+                    in_fexpr = 0
+                i += 1
+                continue
+            if c == "{":
+                fexpr_depth += 1
+                i += 1
+                continue
+            if c in "frb" and i + 1 < target_pos and text[i + 1:i + 2].decode("latin-1") in "\"'":
+                # decode to a 1-char string — bytes indexing gives an int here
+                delim = text[i + 1:i + 2].decode("latin-1")
+                i += 2
+                if i + 1 < length and text[i:i + 1].decode("latin-1") == delim and text[i + 1:i + 2].decode("latin-1") == delim:
+                    i += 2
+                    i = _py_skip_string(text, i, target_pos, delim, True)
+                else:
+                    i = _py_skip_string(text, i, target_pos, delim, False)
+                continue
+            if c in "\"'":
+                delim = c
+                i += 1
+                if i + 1 < length and text[i:i + 1].decode("latin-1") == delim and text[i + 1:i + 2].decode("latin-1") == delim:
+                    i += 2
+                    i = _py_skip_string(text, i, target_pos, delim, True)
+                else:
+                    i = _py_skip_string(text, i, target_pos, delim, False)
+                continue
+            i += 1
+            continue
+
+        if in_comment:
+            if c in "\n\r":
+                in_comment = 0
+            i += 1
+            continue
+
+        if in_string:
+            if escape_next:
+                escape_next = 0
+                i += 1
+                continue
+            if c == "\\" and not triple_string:
+                escape_next = 1
+                i += 1
+                continue
+            if triple_string:
+                if c in "\"'":
+                    if i + 2 < length and text[i + 1:i + 2].decode("latin-1") == c and text[i + 2:i + 3].decode("latin-1") == c:
+                        in_string = triple_string = string_delim = 0
+                        in_fstring = is_docstring = 0
+                        i += 3
+                        continue
+                    i += 1
+                    continue
+                if in_fstring and c == "{":
+                    if i + 1 < length and text[i + 1:i + 2].decode("latin-1") == "{":
+                        i += 2
+                        continue
+                    in_fexpr = 1
+                    fexpr_depth = 1
+                    i += 1
+                    continue
+                i += 1
+                continue
+            if c == string_delim:
+                in_string = string_delim = in_fstring = is_docstring = 0
+                i += 1
+                continue
+            if in_fstring and c == "{":
+                if i + 1 < length and text[i + 1:i + 2].decode("latin-1") == "{":
+                    i += 2
+                    continue
+                in_fexpr = 1
+                fexpr_depth = 1
+                i += 1
+                continue
+            i += 1
+            continue
+
+        # not in string/comment
+        if c in "frb" and i + 1 < target_pos and text[i + 1:i + 2].decode("latin-1") in "\"'":
+            next_c = text[i + 1]
+            if i + 3 < length and text[i + 2:i + 3].decode("latin-1") == next_c and text[i + 3:i + 4].decode("latin-1") == next_c:
+                in_string = triple_string = 1
+                string_delim = next_c
+                in_fstring = 1 if c == "f" else 0
+                if expect_docstring:
+                    is_docstring = 1
+                expect_docstring = 0
+                i += 4
+                continue
+            in_string = 1
+            triple_string = 0
+            string_delim = next_c
+            in_fstring = 1 if c == "f" else 0
+            expect_docstring = 0
+            i += 2
+            continue
+
+        if c in "\"'":
+            if i + 2 < length and text[i + 1:i + 2].decode("latin-1") == c and text[i + 2:i + 3].decode("latin-1") == c:
+                in_string = triple_string = 1
+                string_delim = c
+                in_fstring = 0
+                if expect_docstring:
+                    is_docstring = 1
+                expect_docstring = 0
+                i += 3
+                continue
+            in_string = 1
+            triple_string = 0
+            string_delim = c
+            in_fstring = 0
+            expect_docstring = 0
+            i += 1
+            continue
+
+        if c == "#":
+            in_comment = 1
+            i += 1
+            continue
+
+        if c in "([{":
+            bracket_depth += 1
+            i += 1
+            continue
+        if c in ")]}":
+            if bracket_depth > 0:
+                bracket_depth -= 1
+            i += 1
+            continue
+
+        if c == ":":
+            if bracket_depth == 0 and (pending_def or pending_class):
+                expect_docstring = 1
+                if pending_class:
+                    at_class_body = 1
+                pending_def = pending_class = 0
+            i += 1
+            continue
+
+        if c == "-" and i + 1 < target_pos and text[i + 1:i + 2].decode("latin-1") == ">":
+            i += 2
+            continue
+
+        if c.isalpha() or c == "_":
+            start = i
+            i += 1
+            while i < target_pos and (text[i:i + 1].decode("latin-1").isalnum() or text[i:i + 1].decode("latin-1") == "_"):
+                i += 1
+            word = text[start:i].decode("utf-8", errors="replace")
+            if word == "def":
+                pending_def = 1
+                pending_class = 0
+                at_class_body = 0
+            elif word == "class":
+                pending_class = 1
+                pending_def = 0
+                at_class_body = 0
+            else:
+                expect_docstring = 0
+            continue
+
+        i += 1
+
+    return _py_pack_state(in_string, in_comment, triple_string, string_delim,
+                          in_fstring, escape_next, in_fexpr, fexpr_depth,
+                          is_docstring, expect_docstring, at_class_body)
+
+
+def _py_style_chunk(text, start, end, prev_state, keywords, builtins, magic_methods):
+    """Pure-Python twin of lexer_fast.style_chunk. Returns (final_state, [(len, style), ...])."""
+    length = len(text)
+    end = min(end, length)
+    start = max(0, start)
+
+    (in_string, in_comment, triple_string, string_delim,
+     in_fstring, escape_next, in_fexpr, fexpr_depth, is_docstring,
+     expect_docstring, at_class_body) = _py_unpack_state(prev_state)
+
+    S_DEFAULT, S_KEYWORD, S_TYPES, S_STRING, S_KEYARGS, S_BRACKETS = 0, 1, 2, 3, 4, 5
+    S_COMMENTS, S_CONSTANTS, S_FUNCTIONS, S_CLASSES, S_FUNCTION_DEF = 6, 7, 8, 9, 10
+    S_DECORATOR, S_OPERATORS, S_MAGIC, S_NUMBERS, S_SELF, S_BUILTINS = 11, 12, 13, 14, 15, 16
+    S_PARAMS, S_CLASSREF, S_IFIELD, S_IMETHOD, S_SFIELD, S_SMETHOD = 17, 18, 19, 20, 21, 22
+    S_FCALL, S_LOCAL, S_COMMA, S_MODULE, S_DOCSTRING = 23, 24, 25, 26, 27
+
+    results = []
+    i = start
+
+    after_def = after_class = after_dot = after_at = 0
+    after_from = after_import = in_from_import = 0
+    in_def_params = param_depth = at_type_pos = after_arrow = 0
+    bracket_depth = pending_def = pending_class = 0
+    at_arg_pos = False
+
+    string_style = S_DOCSTRING if (in_string and is_docstring) else S_STRING
+
+    while i < end:
+        c = text[i:i + 1].decode("latin-1")
+
+        # ---- comment ----
+        if in_comment:
+            token_start = i
+            while i < end and text[i:i + 1].decode("latin-1") not in "\n\r":
+                i += 1
+            if i > token_start:
+                results.append((i - token_start, S_COMMENTS))
+            if i < end:
+                in_comment = 0
+                if text[i:i + 1].decode("latin-1") == "\r" and i + 1 < end and text[i + 1:i + 2].decode("latin-1") == "\n":
+                    results.append((2, S_DEFAULT)); i += 2
+                else:
+                    results.append((1, S_DEFAULT)); i += 1
+            continue
+
+        # ---- f-string expression ----
+        if in_fexpr:
+            if c == "}":
+                fexpr_depth -= 1
+                if fexpr_depth <= 0:
+                    fexpr_depth = 0
+                    in_fexpr = 0
+                    results.append((1, string_style))
+                else:
+                    results.append((1, S_BRACKETS))
+                i += 1
+                continue
+            if c == "{":
+                fexpr_depth += 1
+                results.append((1, S_BRACKETS))
+                i += 1
+                continue
+            if c in "frb" and i + 1 < end and text[i + 1:i + 2].decode("latin-1") in "\"'":
+                token_start = i
+                # CHUNK-SAFETY: only consume 4 bytes when all 4 are inside
+                # THIS chunk (not `length` = the full document).
+                if i + 3 < end and text[i + 2:i + 3].decode("latin-1") == text[i + 1:i + 2].decode("latin-1") and text[i + 3:i + 4].decode("latin-1") == text[i + 1:i + 2].decode("latin-1"):
+                    results.append((4, S_STRING)); i += 4
+                else:
+                    results.append((2, S_STRING)); i += 2
+                continue
+            if c in "\"'":
+                token_start = i
+                i += 1
+                while i < end:
+                    if text[i:i + 1].decode("latin-1") == "\\":
+                        # CHUNK-SAFETY: a backslash as the LAST chunk byte
+                        # must not skip past `end` (would over-style by 1).
+                        if i + 1 < end:
+                            i += 2
+                        else:
+                            i += 1
+                        continue
+                    if text[i:i + 1].decode("latin-1") == c:
+                        i += 1
+                        break
+                    if text[i:i + 1].decode("latin-1") in "\n\r":
+                        break
+                    i += 1
+                results.append((i - token_start, S_STRING))
+                continue
+            if c == "#":
+                token_start = i
+                while i < end and text[i:i + 1].decode("latin-1") not in "\n\r":
+                    i += 1
+                results.append((i - token_start, S_COMMENTS))
+                continue
+            if c.isalpha() or c == "_":
+                token_start = i
+                while i < end and (text[i:i + 1].decode("latin-1").isalnum() or text[i:i + 1].decode("latin-1") == "_"):
+                    i += 1
+                token = text[token_start:i].decode("utf-8", errors="replace")
+                followed_by_paren = i < end and text[i:i + 1].decode("latin-1") == "("
+                if token in ("True", "False", "None"):
+                    results.append((i - token_start, S_CONSTANTS))
+                elif token in ("self", "cls"):
+                    results.append((i - token_start, S_SELF))
+                elif token in keywords:
+                    results.append((i - token_start, S_KEYWORD))
+                elif token in builtins:
+                    results.append((i - token_start, S_BUILTINS))
+                elif followed_by_paren:
+                    results.append((i - token_start, S_FCALL))
+                elif token[:1].isupper():
+                    results.append((i - token_start, S_CLASSREF))
+                else:
+                    results.append((i - token_start, S_LOCAL))
+                continue
+            if c.isdigit():
+                token_start = i
+                while i < end and (text[i:i + 1].decode("latin-1").isalnum() or text[i:i + 1].decode("latin-1") == "."):
+                    i += 1
+                results.append((i - token_start, S_NUMBERS))
+                continue
+            if c in "+-*/%=<>!&|^~":
+                token_start = i
+                i += 1
+                if i < end and text[i:i + 1].decode("latin-1") in "+-*/%=<>!&|^~":
+                    i += 1
+                results.append((i - token_start, S_OPERATORS))
+                continue
+            if c in "(){}[]":
+                results.append((1, S_BRACKETS))
+                i += 1
+                continue
+            if c in " \t":
+                token_start = i
+                while i < end and text[i:i + 1].decode("latin-1") in " \t":
+                    i += 1
+                results.append((i - token_start, S_DEFAULT))
+                continue
+            if c in "\n\r":
+                results.append((1, S_DEFAULT))
+                i += 1
+                continue
+            results.append((1, S_DEFAULT))
+            i += 1
+            continue
+
+        # ---- string ----
+        if in_string:
+            token_start = i
+            if escape_next:
+                i += 1
+                escape_next = 0
+                results.append((i - token_start, string_style))
+                continue
+            if c == "\\" and not triple_string:
+                i += 1
+                escape_next = 1
+                results.append((1, string_style))
+                continue
+            if triple_string:
+                if c in "\"'":
+                    # CHUNK-SAFETY: the closing '"""' may straddle the chunk
+                    # end. Only consume 3 quote bytes when ALL of them are
+                    # inside THIS chunk (i + 2 < end, NOT < length). Styling
+                    # more bytes than the chunk contains corrupts
+                    # Scintilla's style buffer and crashes the editor.
+                    if i + 2 < end and text[i + 1:i + 2].decode("latin-1") == c and text[i + 2:i + 3].decode("latin-1") == c:
+                        results.append((3, string_style))
+                        i += 3
+                        in_string = triple_string = string_delim = 0
+                        in_fstring = is_docstring = 0
+                        string_style = S_STRING
+                        continue
+                    results.append((1, string_style))
+                    i += 1
+                    continue
+                if in_fstring and c == "{":
+                    # CHUNK-SAFETY: '{{' needs both braces inside the chunk.
+                    if i + 1 < end and text[i + 1:i + 2].decode("latin-1") == "{":
+                        if i > token_start:
+                            results.append((i - token_start, string_style))
+                        results.append((2, string_style))
+                        i += 2
+                        continue
+                    if i > token_start:
+                        results.append((i - token_start, string_style))
+                    results.append((1, string_style))
+                    i += 1
+                    in_fexpr = 1
+                    fexpr_depth = 1
+                    continue
+                token_start = i
+                while i < end:
+                    c2 = text[i:i + 1].decode("latin-1")
+                    if c2 in "\"'\\":
+                        break
+                    if in_fstring and c2 == "{":
+                        break
+                    i += 1
+                if i > token_start:
+                    results.append((i - token_start, string_style))
+                continue
+
+            # single-line string
+            token_start = i
+            while i < end:
+                c2 = text[i:i + 1].decode("latin-1")
+                if c2 == string_delim:
+                    results.append((i - token_start + 1, string_style))
+                    i += 1
+                    in_string = string_delim = in_fstring = is_docstring = 0
+                    string_style = S_STRING
+                    break
+                if c2 == "\\":
+                    results.append((i - token_start, string_style))
+                    results.append((1, string_style))
+                    i += 1
+                    escape_next = 1
+                    break
+                if in_fstring and c2 == "{":
+                    # CHUNK-SAFETY: '{{' needs both braces inside the chunk.
+                    if i + 1 < end and text[i + 1:i + 2].decode("latin-1") == "{":
+                        if i > token_start:
+                            results.append((i - token_start, string_style))
+                        results.append((2, string_style))
+                        i += 2
+                        token_start = i
+                        continue
+                    if i > token_start:
+                        results.append((i - token_start, string_style))
+                    results.append((1, string_style))
+                    i += 1
+                    in_fexpr = 1
+                    fexpr_depth = 1
+                    break
+                if c2 in "\n\r":
+                    results.append((i - token_start, string_style))
+                    in_string = string_delim = in_fstring = is_docstring = 0
+                    string_style = S_STRING
+                    break
+                i += 1
+            else:
+                results.append((i - token_start, string_style))
+            continue
+
+        # ---- not in string or comment ----
+        if c in " \t":
+            token_start = i
+            while i < end and text[i:i + 1].decode("latin-1") in " \t":
+                i += 1
+            results.append((i - token_start, S_DEFAULT))
+            continue
+
+        if c in "\n\r":
+            if c == "\r" and i + 1 < end and text[i + 1] == "\n":
+                results.append((2, S_DEFAULT)); i += 2
+            else:
+                results.append((1, S_DEFAULT)); i += 1
+            if bracket_depth == 0:
+                after_def = after_class = after_at = after_dot = 0
+                after_from = after_import = in_from_import = 0
+                at_arg_pos = False
+                at_type_pos = after_arrow = 0
+            continue
+
+        if c in "frb" and i + 1 < end and text[i + 1:i + 2].decode("latin-1") in "\"'":
+            # decode to a 1-char string — bytes indexing would give an int
+            # here and break every comparison below.
+            next_c = text[i + 1:i + 2].decode("latin-1")
+            token_start = i
+            # CHUNK-SAFETY: prefixed triple strings need all 4 bytes
+            # inside THIS chunk, not just inside the document.
+            if i + 3 < end and text[i + 2:i + 3].decode("latin-1") == next_c and text[i + 3:i + 4].decode("latin-1") == next_c:
+                if expect_docstring:
+                    string_style = S_DOCSTRING
+                    is_docstring = 1
+                else:
+                    string_style = S_STRING
+                results.append((4, string_style))
+                i += 4
+                in_string = triple_string = 1
+                string_delim = next_c
+                in_fstring = 1 if c == "f" else 0
+            else:
+                results.append((2, S_STRING))
+                i += 2
+                in_string = 1
+                triple_string = 0
+                string_delim = next_c
+                in_fstring = 1 if c == "f" else 0
+            expect_docstring = 0
+            continue
+
+        if c in "\"'":
+            # CHUNK-SAFETY: the opening '"""' may straddle the chunk end.
+            # Only consume 3 quote bytes when ALL of them are inside THIS
+            # chunk; otherwise fall through to single-line-string handling
+            # (the next chunk's state scan sees the full triple and styles
+            # the remaining quotes correctly).
+            if i + 2 < end and text[i + 1:i + 2].decode("latin-1") == c and text[i + 2:i + 3].decode("latin-1") == c:
+                if expect_docstring:
+                    string_style = S_DOCSTRING
+                    is_docstring = 1
+                else:
+                    string_style = S_STRING
+                results.append((3, string_style))
+                i += 3
+                in_string = triple_string = 1
+                string_delim = c
+                in_fstring = 0
+            else:
+                results.append((1, S_STRING))
+                i += 1
+                in_string = 1
+                triple_string = 0
+                string_delim = c
+                in_fstring = 0
+            expect_docstring = 0
+            continue
+
+        if c == "#":
+            in_comment = 1
+            token_start = i
+            i += 1
+            while i < end and text[i:i + 1].decode("latin-1") not in "\n\r":
+                i += 1
+            results.append((i - token_start, S_COMMENTS))
+            continue
+
+        if c == "@":
+            results.append((1, S_DECORATOR))
+            i += 1
+            after_at = 1
+            expect_docstring = 0
+            at_arg_pos = False
+            continue
+
+        if c.isdigit():
+            token_start = i
+            while i < end and (text[i:i + 1].decode("latin-1").isalnum() or text[i:i + 1].decode("latin-1") == "."):
+                i += 1
+            results.append((i - token_start, S_NUMBERS))
+            expect_docstring = 0
+            at_arg_pos = False
+            continue
+
+        if c == ".":
+            results.append((1, S_DEFAULT))
+            i += 1
+            if not (after_from or after_import):
+                after_dot = 1
+            at_arg_pos = False
+            continue
+
+        if c in "(){}[]":
+            results.append((1, S_BRACKETS))
+            if c in "([{":
+                bracket_depth += 1
+                if c == "(" and after_def:
+                    in_def_params = 1
+                    param_depth = 1
+                    after_def = 0
+                    at_type_pos = 0
+                elif in_def_params:
+                    param_depth += 1
+                at_arg_pos = True
+            else:
+                if bracket_depth > 0:
+                    bracket_depth -= 1
+                if in_def_params:
+                    param_depth -= 1
+                    if param_depth <= 0:
+                        in_def_params = 0
+                        param_depth = 0
+                        at_type_pos = 0
+                at_arg_pos = False
+            i += 1
+            after_dot = 0
+            continue
+
+        if c in "+-*/%=<>!&|^~":
+            token_start = i
+            i += 1
+            if i < end and text[i:i + 1].decode("latin-1") in "+-*/%=<>!&|^~":
+                i += 1
+            results.append((i - token_start, S_OPERATORS))
+            expect_docstring = 0
+            if text[token_start:token_start + 1].decode("latin-1") == "-" and token_start + 1 < end and text[token_start + 1:token_start + 2].decode("latin-1") == ">":
+                if pending_def and bracket_depth == 0:
+                    after_arrow = 1
+            at_arg_pos = False
+            continue
+
+        if c == ",":
+            results.append((1, S_COMMA))
+            i += 1
+            if in_def_params:
+                at_type_pos = 0
+            if not (after_import or in_from_import or after_from):
+                pass
+            at_arg_pos = True
+            continue
+
+        if c == ":":
+            results.append((1, S_DEFAULT))
+            if in_def_params and param_depth == 1:
+                at_type_pos = 1
+            elif bracket_depth == 0 and (pending_def or pending_class):
+                expect_docstring = 1
+                if pending_class:
+                    at_class_body = 1
+                pending_def = pending_class = 0
+                after_arrow = 0
+            i += 1
+            at_arg_pos = False
+            continue
+
+        if c == ";":
+            results.append((1, S_DEFAULT))
+            i += 1
+            expect_docstring = after_from = after_import = in_from_import = 0
+            at_arg_pos = False
+            continue
+
+        # ---- identifier ----
+        if c.isalpha() or c == "_":
+            token_start = i
+            while i < end and (text[i:i + 1].decode("latin-1").isalnum() or text[i:i + 1].decode("latin-1") == "_"):
+                i += 1
+            token = text[token_start:i].decode("utf-8", errors="replace")
+
+            followed_by_paren = i < end and text[i:i + 1].decode("latin-1") == "("
+            followed_by_eq = (i < end and text[i:i + 1].decode("latin-1") == "=" and
+                              (i + 1 >= end or text[i + 1:i + 2].decode("latin-1") != "="))
+            _j = i
+            while _j < end and text[_j:_j + 1].decode("latin-1") in " \t":
+                _j += 1
+            followed_by_assign = (_j < end and text[_j:_j + 1].decode("latin-1") == "=" and
+                                  (_j + 1 >= end or text[_j + 1:_j + 2].decode("latin-1") != "="))
+
+            if token not in ("def", "class"):
+                expect_docstring = 0
+
+            # --- decision tree (mirrors lexer_fast.pyx / PyCharm) ---
+            if after_at:
+                results.append((i - token_start, S_DECORATOR))
+                after_at = 0
+            elif token in ("self", "cls"):
+                results.append((i - token_start, S_SELF))
+            elif token in ("True", "False", "None"):
+                results.append((i - token_start, S_CONSTANTS))
+            elif token == "def":
+                results.append((i - token_start, S_KEYWORD))
+                after_def = pending_def = 1
+                pending_class = at_class_body = 0
+            elif token == "class":
+                results.append((i - token_start, S_KEYWORD))
+                after_class = pending_class = 1
+                pending_def = 0
+            elif token == "import":
+                results.append((i - token_start, S_KEYWORD))
+                if after_from:
+                    after_from = 0
+                    in_from_import = 1
+                else:
+                    after_import = 1
+            elif token == "from":
+                results.append((i - token_start, S_KEYWORD))
+                after_from = 1
+            elif token == "as":
+                results.append((i - token_start, S_KEYWORD))
+                after_import = in_from_import = 0
+            elif token in keywords:
+                results.append((i - token_start, S_KEYWORD))
+            elif after_def:
+                if token in magic_methods:
+                    results.append((i - token_start, S_MAGIC))
+                else:
+                    results.append((i - token_start, S_FUNCTION_DEF))
+            elif after_class:
+                results.append((i - token_start, S_CLASSES))
+                after_class = 0
+            elif after_dot:
+                if followed_by_paren:
+                    results.append((i - token_start, S_IMETHOD))
+                else:
+                    results.append((i - token_start, S_IFIELD))
+                after_dot = 0
+            elif in_def_params and param_depth == 1:
+                if at_type_pos:
+                    results.append((i - token_start, S_TYPES))
+                else:
+                    results.append((i - token_start, S_PARAMS))
+            elif after_arrow:
+                results.append((i - token_start, S_TYPES))
+            elif after_from or after_import:
+                results.append((i - token_start, S_MODULE))
+            elif in_from_import:
+                if token[:1].isupper():
+                    results.append((i - token_start, S_CLASSREF))
+                else:
+                    results.append((i - token_start, S_MODULE))
+            elif at_arg_pos and followed_by_eq and not in_def_params:
+                results.append((i - token_start, S_KEYARGS))
+            elif at_class_body and followed_by_assign:
+                results.append((i - token_start, S_IFIELD))
+            elif token in builtins:
+                results.append((i - token_start, S_BUILTINS))
+            elif followed_by_paren:
+                results.append((i - token_start, S_FCALL))
+            elif token.startswith("__") and token.endswith("__") and len(token) > 4:
+                results.append((i - token_start, S_BUILTINS))
+            elif token[:1].isupper():
+                results.append((i - token_start, S_CLASSREF))
+            else:
+                results.append((i - token_start, S_LOCAL))
+
+            at_arg_pos = False
+            continue
+
+        results.append((1, S_DEFAULT))
+        i += 1
+        at_arg_pos = False
+
+    final_state = _py_pack_state(in_string, in_comment, triple_string,
+                                 string_delim, in_fstring, escape_next,
+                                 in_fexpr, fexpr_depth, is_docstring,
+                                 expect_docstring, at_class_body)
+    return (final_state, results)
+
 
 class NeutronLexer(QsciLexerCustom):
     def __init__(self, language_name, editor, theme=None):
@@ -58,7 +866,7 @@ class NeutronLexer(QsciLexerCustom):
         self.CLASSES = 9
         self.FUNCTION_DEF = 10
         self.DECORATOR = 11
-        # --- New styles for Cython lexer 
+        # --- Semantic styles (mirror PyCharm's Python color scheme) ---
         self.OPERATORS = 12
         self.MAGIC_METHODS = 13
         self.NUMBERS = 14
@@ -74,17 +882,17 @@ class NeutronLexer(QsciLexerCustom):
         self.LOCAL_VARIABLE = 24
         self.COMMA = 25
         self.MODULE_NAME = 26
-
+        self.DOCSTRING = 27
 
         self.default_names = [
             "default", "keyword", "types", "string", "keyargs",
             "brackets", "comments", "constants", "functions",
-            "classes", "function_def", "decorator", 
-            "operators", "magic_methods", "numbers", 
+            "classes", "function_def", "decorator",
+            "operators", "magic_methods", "numbers",
             "self_cls", "builtins", "parameters",
             "class_reference", "instance_field", "instance_method",
             "static_field", "static_method", "function_call",
-            "local_variable", "comma", "module_name",
+            "local_variable", "comma", "module_name", "docstring",
         ]
 
         self.font_weights = {
@@ -98,7 +906,7 @@ class NeutronLexer(QsciLexerCustom):
             "extrabold": getattr(QFont, 'ExtraBold', QFont.Bold),
             "black": QFont.Black,
         }
-        self._prev_state=0
+        self._prev_state = 0
 
     def _init_theme(self):
         with open(self.theme, "r", encoding="utf-8") as f:
@@ -116,16 +924,14 @@ class NeutronLexer(QsciLexerCustom):
                 elif k == "paper-color":
                     self.setPaper(QColor(v), getattr(self, name.upper()))
                 elif k == "font":
-                    weight = self.font_weights.get(v.get("font-weight", "light"), QFont.Light)
-                    self.setFont(
-                        QFont(
-                            v.get("family", "sans-serif"),
-                            v.get("font-size", 13),
-                            weight,
-                            v.get("italic", False),
-                        ),
-                        getattr(self, name.upper())
+                    weight = self.font_weights.get(v.get("font-weight", "normal"), QFont.Normal)
+                    fnt = QFont(
+                        v.get("family", "sans-serif"),
+                        v.get("font-size", 13),
+                        weight,
                     )
+                    fnt.setItalic(bool(v.get("italic", False)))
+                    self.setFont(fnt, getattr(self, name.upper()))
 
     def language(self):
         return self.language_name
@@ -159,6 +965,7 @@ class NeutronLexer(QsciLexerCustom):
             self.LOCAL_VARIABLE: "LOCAL_VARIABLE",
             self.COMMA: "COMMA",
             self.MODULE_NAME: "MODULE_NAME",
+            self.DOCSTRING: "DOCSTRING",
         }
         return names.get(style, "")
 
@@ -171,6 +978,12 @@ class NeutronLexer(QsciLexerCustom):
             return len(text)
         return len(encoded[:byte_pos].decode("utf-8", errors="ignore"))
 
+    # ------------------------------------------------------------------ #
+    #  Token stream helpers.
+    #  Used by subclasses that style text token-by-token (e.g.
+    #  MarkdownCustomLexer). PyCustomLexer itself no longer needs them -
+    #  its styling runs through lexer_fast / the pure-Python fallback.
+    # ------------------------------------------------------------------ #
     def generate_token(self, text):
         p = re.compile(r"\s+|\w+|\W")
         self.token_list = [(token, len(bytearray(token, "utf-8"))) for token in p.findall(text)]
@@ -196,110 +1009,6 @@ class NeutronLexer(QsciLexerCustom):
                 return tok, i
             i += 1
 
-    def _compute_state_before(self, full_text, target_char_pos):
-        """
-        Scan from the beginning of the document to target_char_pos
-        and return the lexer state at that position.
-
-        This is the GUARANTEED CORRECT approach — it doesn't rely on
-        any cached state. It re-parses the prefix every time.
-
-        Returns: (in_string, in_comment, triple_string, string_delim,
-                  in_fstring, escape_next)
-        """
-        prefix = full_text[:target_char_pos]
-        self.generate_token(prefix)
-
-        in_string = False
-        in_comment = False
-        triple_string = False
-        string_delim = None
-        in_fstring = False
-        escape_next = False
-
-        while True:
-            curr = self.next_tok()
-            if curr is None:
-                break
-            tok, _ = curr
-
-            if in_comment:
-                if "\n" in tok or "\r" in tok:
-                    in_comment = False
-                continue
-
-            if in_string:
-                if escape_next:
-                    escape_next = False
-                    continue
-
-                if tok == "\\" and not triple_string:
-                    escape_next = True
-                    continue
-
-                if triple_string:
-                    if tok in ("'", '"'):
-                        p1 = self.peek_tok(0)
-                        p2 = self.peek_tok(1)
-                        if p1 and p1[0] == tok and p2 and p2[0] == tok:
-                            self.next_tok()
-                            self.next_tok()
-                            in_string = False
-                            triple_string = False
-                            string_delim = None
-                            in_fstring = False
-                    continue
-
-                if tok == string_delim:
-                    in_string = False
-                    string_delim = None
-                    in_fstring = False
-                continue
-
-            # f-string prefix detection
-            if tok in ("f", "fr", "rf", "r", "b", "rb", "br", "fb", "bf") and not tok.isnumeric():
-                nt = self.peek_tok(0)
-                if nt[0] in ("'", '"'):
-                    p1 = self.peek_tok(1)
-                    p2 = self.peek_tok(2)
-                    if p1 and p1[0] == nt[0] and p2 and p2[0] == nt[0]:
-                        self.next_tok()
-                        self.next_tok()
-                        in_string = True
-                        triple_string = True
-                        string_delim = nt[0]
-                        in_fstring = "f" in tok
-                    else:
-                        self.next_tok()
-                        in_string = True
-                        triple_string = False
-                        string_delim = nt[0]
-                        in_fstring = "f" in tok
-                    continue
-
-            if tok in ("'", '"'):
-                p1 = self.peek_tok(0)
-                p2 = self.peek_tok(1)
-                if p1 and p1[0] == tok and p2 and p2[0] == tok:
-                    self.next_tok()
-                    self.next_tok()
-                    in_string = True
-                    triple_string = True
-                    string_delim = tok
-                    in_fstring = False
-                else:
-                    in_string = True
-                    triple_string = False
-                    string_delim = tok
-                    in_fstring = False
-                continue
-
-            if tok == "#":
-                in_comment = True
-                continue
-
-        return in_string, in_comment, triple_string, string_delim, in_fstring, escape_next
-
 
 class PyCustomLexer(NeutronLexer):
     def __init__(self, editor):
@@ -308,7 +1017,7 @@ class PyCustomLexer(NeutronLexer):
         self.setBuiltinNames([
             name for name, obj in vars(builtins).items()
             if isinstance(obj, (types.BuiltinFunctionType, type))
-        ])
+        ] + list(_STDLIB_MODULES))
         self._keyword_set = set(keyword.kwlist)
         self._builtin_set = set(self.builtin_names)
         self.setDefaultPaper(QColor("#1e1f22"))
@@ -323,25 +1032,21 @@ class PyCustomLexer(NeutronLexer):
             "__name__", "__doc__", "__dict__", "__module__",
         }
         self._prev_state = 0
-        
-    
+
     def styleText(self, start: int, end: int) -> None:
         full_text = self.editor.text()
         text_bytes = full_text.encode('utf-8')
-        
+
         start_char = self._byte_pos_to_char_index(full_text, start)
         end_char = self._byte_pos_to_char_index(full_text, end)
-        
+
         start_byte = len(full_text[:start_char].encode('utf-8'))
         end_byte = len(full_text[:end_char].encode('utf-8'))
-        
+
+        # Compute the correct lexer state at start_byte by scanning from byte 0.
+        # This is necessary because QScintilla may call styleText for
+        # non-contiguous regions (e.g. when the user scrolls).
         if _HAS_CYTHON:
-            # --- Cython path (50 - 100x faster) ---
-            # Compute the correct lexer state at start_byte by scanning from byte 0.
-            # This is necessary because QScintilla may call styleText for non-contiguous
-            # regions (e.g., when the user scrolls). Using self._prev_state from the
-            # previous call would give the wrong state if the previous call ended at
-            # a different position.
             prev_state = _cython_state(text_bytes, start_byte)
             final_state, styled_tokens = _cython_style(
                 text_bytes,
@@ -352,221 +1057,21 @@ class PyCustomLexer(NeutronLexer):
                 self._builtin_set,
                 self._magic_set,
             )
-            
-            # Apply the styles to QScintilla
-            # startStyling() sets the starting byte pyosition
-            # setStyling(length, style_id) styles 'length' bytes
-            self.startStyling(start)
-            for byte_len, style_id in styled_tokens:
-                self.setStyling(byte_len, style_id)
-                
-            # Save the state for the next styleText call
-            self._prev_state = final_state
-            
         else:
-            # --- Pure Python fallback (your existing code) ---
-            # This runs when the Cython module is not compiled.
-            # It's the same tokenization and styling that was here before
-            in_string, in_comment, triple_string, string_delim, in_fstring, escape_next = self._compute_state_before(full_text, start_char)
-            
-            chunk = full_text[start_char:end_char]
-            self.startStyling(start)
-            self.generate_token(chunk)
-            
-            
-        
-        while True:
-            curr_token = self.next_tok()
-            if curr_token is None:
-                break
+            # Pure-Python fallback - identical logic to lexer_fast.pyx
+            prev_state = _py_compute_state(text_bytes, start_byte)
+            final_state, styled_tokens = _py_style_chunk(
+                text_bytes,
+                start_byte,
+                end_byte,
+                prev_state,
+                self._keyword_set,
+                self._builtin_set,
+                self._magic_set,
+            )
 
-            tok, tok_len = curr_token
+        self.startStyling(start)
+        for byte_len, style_id in styled_tokens:
+            self.setStyling(byte_len, style_id)
 
-            if in_comment:
-                self.setStyling(tok_len, self.COMMENTS)
-                if "\n" in tok or "\r" in tok:
-                    in_comment = False
-                continue
-
-            if in_string:
-                # f-string expression handling
-                if in_fstring and not triple_string:
-                    if tok == "{":
-                        self.setStyling(tok_len, self.BRACKETS)
-                        depth = 1
-                        while depth > 0:
-                            expr_tok = self.next_tok()
-                            if expr_tok is None:
-                                break
-                            et, el = expr_tok
-                            if et == "{":
-                                depth += 1
-                                self.setStyling(el, self.BRACKETS)
-                            elif et == "}":
-                                depth -= 1
-                                self.setStyling(el, self.BRACKETS)
-                            else:
-                                self.setStyling(el, self.DEFAULT)
-                        continue
-                    self.setStyling(tok_len, self.STRING)
-                else:
-                    self.setStyling(tok_len, self.STRING)
-
-                if escape_next:
-                    escape_next = False
-                    continue
-
-                if tok == "\\" and not triple_string:
-                    escape_next = True
-                    continue
-
-                if triple_string:
-                    if tok in ("'", '"'):
-                        p1 = self.peek_tok(0)
-                        p2 = self.peek_tok(1)
-                        if p1 and p1[0] == tok and p2 and p2[0] == tok:
-                            t1 = self.next_tok()
-                            self.setStyling(t1[1], self.STRING)
-                            t2 = self.next_tok()
-                            self.setStyling(t2[1], self.STRING)
-                            in_string = False
-                            triple_string = False
-                            string_delim = None
-                            in_fstring = False
-                    continue
-
-                if tok == string_delim:
-                    in_string = False
-                    string_delim = None
-                    in_fstring = False
-                continue
-
-            # --- Not in string or comment ---
-
-            # f-string prefix detection
-            if tok in ("f", "fr", "rf", "r", "b", "rb", "br", "fb", "bf") and not tok.isnumeric():
-                next_tok = self.peek_tok(0)
-                if next_tok[0] in ("'", '"'):
-                    p1 = self.peek_tok(1)
-                    p2 = self.peek_tok(2)
-                    if p1 and p1[0] == next_tok[0] and p2 and p2[0] == next_tok[0]:
-                        # Triple-quoted f-string
-                        self.setStyling(tok_len, self.STRING)
-                        t1 = self.next_tok()
-                        self.setStyling(t1[1], self.STRING)
-                        t2 = self.next_tok()
-                        self.setStyling(t2[1], self.STRING)
-                        in_string = True
-                        triple_string = True
-                        string_delim = next_tok[0]
-                        in_fstring = "f" in tok
-                    else:
-                        # Single-quoted f-string
-                        self.setStyling(tok_len, self.STRING)
-                        qt = self.next_tok()
-                        self.setStyling(qt[1], self.STRING)
-                        in_string = True
-                        triple_string = False
-                        string_delim = qt[0]
-                        in_fstring = "f" in tok
-                    continue
-
-            if tok in ("'", '"'):
-                self.setStyling(tok_len, self.STRING)
-                p1 = self.peek_tok(0)
-                p2 = self.peek_tok(1)
-
-                if p1 and p1[0] == tok and p2 and p2[0] == tok:
-                    t1 = self.next_tok()
-                    self.setStyling(t1[1], self.STRING)
-                    t2 = self.next_tok()
-                    self.setStyling(t2[1], self.STRING)
-                    in_string = True
-                    triple_string = True
-                    string_delim = tok
-                    in_fstring = False
-                else:
-                    in_string = True
-                    triple_string = False
-                    string_delim = tok
-                    in_fstring = False
-                continue
-
-            # Decorators
-            if tok == "@":
-                self.setStyling(tok_len, self.DECORATOR)
-                name, name_index = self.skip_space_peek()
-                if name and name[0].isidentifier():
-                    for _ in range(name_index + 1):
-                        t = self.next_tok()
-                        if t is None:
-                            break
-                        if t[0].isspace():
-                            self.setStyling(t[1], self.DEFAULT)
-                        else:
-                            self.setStyling(t[1], self.DECORATOR)
-                    while self.peek_tok()[0] == ".":
-                        dot = self.next_tok()
-                        self.setStyling(dot[1], self.DECORATOR)
-                        attr = self.next_tok()
-                        if attr is None:
-                            break
-                        self.setStyling(attr[1], self.DECORATOR)
-                continue
-
-            if tok == "#":
-                self.setStyling(tok_len, self.COMMENTS)
-                in_comment = True
-                continue
-
-            if tok == "class":
-                name, name_index = self.skip_space_peek()
-                after_name = self.peek_tok(name_index + 1) if name and name[0] else ("", 0)
-                if name[0].isidentifier() and after_name[0] in (":", "("):
-                    self.setStyling(tok_len, self.KEYWORD)
-                    for _ in range(name_index + 1):
-                        t = self.next_tok()
-                        if t is None:
-                            break
-                        if t[0].isspace():
-                            self.setStyling(t[1], self.DEFAULT)
-                        else:
-                            self.setStyling(t[1], self.CLASSES)
-                    continue
-                self.setStyling(tok_len, self.KEYWORD)
-                continue
-
-            if tok == "def":
-                name, name_index = self.skip_space_peek()
-                if name[0].isidentifier():
-                    self.setStyling(tok_len, self.KEYWORD)
-                    for _ in range(name_index + 1):
-                        t = self.next_tok()
-                        if t is None:
-                            break
-                        style = self.DEFAULT if t[0].isspace() else self.FUNCTION_DEF
-                        self.setStyling(t[1], style)
-                    continue
-                self.setStyling(tok_len, self.KEYWORD)
-                continue
-
-            if tok in self.keyword_list:
-                self.setStyling(tok_len, self.KEYWORD)
-            elif tok == "." and self.peek_tok()[0].isidentifier():
-                self.setStyling(tok_len, self.DEFAULT)
-                nxt = self.next_tok()
-                if nxt is None:
-                    break
-                name_tok, name_len = nxt
-                if self.peek_tok()[0] == "(":
-                    self.setStyling(name_len, self.FUNCTIONS)
-                else:
-                    self.setStyling(name_len, self.DEFAULT)
-            elif tok.isnumeric() or tok in ("self", "cls"):
-                self.setStyling(tok_len, self.CONSTANTS)
-            elif tok in ["(", ")", "{", "}", "[", "]"]:
-                self.setStyling(tok_len, self.BRACKETS)
-            elif tok in self.builtin_names or tok in ['+', '-', '*', '/', '%', '=', '<', '>', '!', '&', '|', '^', '~']:
-                self.setStyling(tok_len, self.TYPES)
-            else:
-                self.setStyling(tok_len, self.DEFAULT)
+        self._prev_state = final_state

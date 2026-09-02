@@ -325,22 +325,29 @@ class PythonEditor(QsciScintilla):
             # SCI_NEWLINE = 2329. Inserts a native Scintilla newline using the
             # configured EOL mode. This is the ONLY newline insertion in this
             # method — do not call it a second time.
+            #
+            # NOTE: with setAutoIndent(True), Scintilla ALSO copies the previous
+            # line's indentation onto the new line inside SCI_NEWLINE.
             self.SendScintilla(2329)
-            
+
             new_line, _new_index = self.getCursorPosition()
-            
-            new_line_text = self.text(new_line)
-            existing_indent_length = len(new_line_text) - len(new_line_text.lstrip(" \t"))
-            if existing_indent_length:
-                self.setSelection(new_line, 0, new_line, existing_indent_length)
-                self.replace("")
-            
-            if desired_indent:
-                self.insertAt(desired_indent, new_line, 0)
-                
+
+            # Replace whatever indentation Scintilla's auto-indent produced
+            # with our computed indent, atomically, via
+            # SCI_SETLINEINDENTATION (= 2126). The old approach
+            # (setSelection + replace("")) is a silent NO-OP in this PyQt5
+            # QScintilla binding — an empty replacement string leaves the
+            # selection untouched, so the auto-indent stayed in place and
+            # insertAt() stacked a second indent on top of it (bug: pressing
+            # Enter after a continuation line added 16 spaces instead of 8).
+            indent_columns = 0
+            for ch in desired_indent:
+                indent_columns += self.tabWidth() if ch == "\t" else 1
+            self.SendScintilla(2126, new_line, indent_columns)
+
             self.setCursorPosition(new_line, len(desired_indent))
         finally:
-            self.endUndoAction()        
+            self.endUndoAction()
     
     
     def keyPressEvent(self, e: QKeyEvent) -> None:
