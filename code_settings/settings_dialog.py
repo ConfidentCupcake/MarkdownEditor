@@ -1,9 +1,11 @@
 from pathlib import Path
-from PyQt5.QtCore import QtCore
+import sys
+
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
-    QLabel, QLineEdit, QSpinBox, QCheckBox, QPushButton,
+    QLineEdit, QSpinBox, QCheckBox, QPushButton,
     QFontComboBox, QComboBox, QFileDialog, QFormLayout,
 )
 
@@ -63,9 +65,15 @@ class SettingsDialog(QDialog):
         self.tab_width_spin.setValue(self.settings.get("tab_width", 4))
         layout.addRow("Tab width:", self.tab_width_spin)
         
-        self.word_warp_cb = QCheckBox("Enable wrong warp")
-        self.word_warp_cb.setChecked(self.settings.get("word_warp", False))
+        self.word_warp_cb = QCheckBox("Enable word wrap")  # BUGFIX: typo "wrong warp"
+        # BUGFIX: read "word_warp" but main.py stores "word_wrap",
+        # so the checkbox never showed the saved value.
+        self.word_warp_cb.setChecked(self.settings.get("word_wrap", False))
         layout.addRow("", self.word_warp_cb)
+
+        self.restore_tabs_cb = QCheckBox("Restore open tabs on startup")
+        self.restore_tabs_cb.setChecked(self.settings.get("restore_tabs", True))
+        layout.addRow("", self.restore_tabs_cb)
         
         return tab
     
@@ -90,8 +98,8 @@ class SettingsDialog(QDialog):
         # _run_ruff_before_save() already checks (safe_format" or "off")
         self.ruff_combo = QComboBox()
         self.ruff_combo.addItem("Off (never run Ruff on save)", "off")
-        self.ruff_combo.additem("Safe fixes + format on save", "safe_format")
-        current_mode = self.settings.get("ruff_save_mode", "off")
+        self.ruff_combo.addItem("Safe fixes + format on save", "safe_format")
+        current_mode = self.settings.get("ruff_save_mode", "safe_format")
         index = self.ruff_combo.findData(current_mode)
         if index >= 0:
             self.ruff_combo.setCurrentIndex(index)
@@ -105,16 +113,31 @@ class SettingsDialog(QDialog):
         layout = QFormLayout(tab)
         
         self.theme_combo = QComboBox()
-        themes_dir = Path(__file__).parent / "themes"
+        # BUGFIX: settings_dialog.py lives in code_settings/, so
+        # Path(__file__).parent / "themes" pointed at code_settings/themes/
+        # which does not exist -> the combo stayed EMPTY. Go one level up,
+        # and honour PyInstaller's bundle dir when frozen.
+        if getattr(sys, "frozen", False):
+            themes_dir = Path(sys._MEIPASS) / "themes"
+        else:
+            themes_dir = Path(__file__).resolve().parent.parent / "themes"
         if themes_dir.is_dir():
-            for theme_file in sorted(themes_dir.glob("*json")):
-                # userData stores the file name; MarkdownCustonLexer and PyCustomLexer both load themes/themes.json by default, 
-                # so a theme switch recreates the lexer
+            for theme_file in sorted(themes_dir.glob("*.json")):
+                # userData stores the file name; both lexer classes load
+                # themes/theme.json by default, so a theme switch recreates
+                # the lexer with the chosen file instead.
                 self.theme_combo.addItem(theme_file.stem, theme_file.name)
-        current_theme = self.settings.get("theme", "theme.json")
+        if self.theme_combo.count() == 0:
+            # Fallback so the combo is never empty and saving a None
+            # theme is impossible.
+            self.theme_combo.addItem("theme", "theme.json")
+        current_theme = self.settings.get("theme") or "theme.json"
         index = self.theme_combo.findData(current_theme)
-        if index >= 0:
-            self.theme_combo.setCurrentIndex(index)
+        # If the stored theme file was deleted, fall back to the first
+        # entry instead of leaving the combo blank.
+        if index < 0:
+            index = 0
+        self.theme_combo.setCurrentIndex(index)
         layout.addRow("Theme:", self.theme_combo)
         
         self.line_numbers_cb = QCheckBox("Show Line Numbers")
@@ -141,10 +164,11 @@ class SettingsDialog(QDialog):
             "font_family": self.font_combo.currentFont().family(),
             "font_size": self.font_size_spin.value(),
             "tab_width": self.tab_width_spin.value(),
-            "word_warp": self.word_warp_cb.isChecked(),
+            "word_wrap": self.word_warp_cb.isChecked(),
+            "restore_tabs": self.restore_tabs_cb.isChecked(),
             "interpreter": self.interpreter_input.text().strip(),
             "ruff_save_mode": self.ruff_combo.currentData(),
-            "theme": self.theme_combo.currentData(),
+            "theme": self.theme_combo.currentData() or "theme.json",
             "line_numbers": self.line_numbers_cb.isChecked(),
             "highlight_line": self.highlight_line_cb.isChecked(),
         }

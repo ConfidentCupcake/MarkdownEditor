@@ -1,6 +1,6 @@
 from PyQt5.QtCore import QThread, pyqtSignal
 from jedi import Script
-
+# This is just for testing
 class HoverHelper(QThread):
     """
     Background thread that retrieves hover information for

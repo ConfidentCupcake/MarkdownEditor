@@ -1,0 +1,253 @@
+
+[2026-09-02 13:51:55]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(
+    ~~~~~~~~~~~~~~~~^
+        expr=text,
+        ^^^^^^^^^^
+    ...<7 lines>...
+        posix=False,
+        ^^^^^^^^^^^^
+    )
+    ^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 'expr' is not a valid keyword argument
+
+[2026-09-02 13:51:57]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(
+    ~~~~~~~~~~~~~~~~^
+        expr=text,
+        ^^^^^^^^^^
+    ...<7 lines>...
+        posix=False,
+        ^^^^^^^^^^^^
+    )
+    ^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 'expr' is not a valid keyword argument
+
+[2026-09-02 13:53:27]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(
+    ~~~~~~~~~~~~~~~~^
+        text,
+        ^^^^^
+    ...<7 lines>...
+        posix=False,
+        ^^^^^^^^^^^^
+    )
+    ^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 13:53:28]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(
+    ~~~~~~~~~~~~~~~~^
+        text,
+        ^^^^^
+    ...<7 lines>...
+        posix=False,
+        ^^^^^^^^^^^^
+    )
+    ^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 13:53:29]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(
+    ~~~~~~~~~~~~~~~~^
+        text,
+        ^^^^^
+    ...<7 lines>...
+        posix=False,
+        ^^^^^^^^^^^^
+    )
+    ^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 13:53:29]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(
+    ~~~~~~~~~~~~~~~~^
+        text,
+        ^^^^^
+    ...<7 lines>...
+        posix=False,
+        ^^^^^^^^^^^^
+    )
+    ^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 13:54:43]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(
+    ~~~~~~~~~~~~~~~~^
+        text,
+        ^^^^^
+    ...<6 lines>...
+        show=True,
+        ^^^^^^^^^^
+    )
+    ^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 'wrap' is not a valid keyword argument
+
+[2026-09-02 13:54:44]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(
+    ~~~~~~~~~~~~~~~~^
+        text,
+        ^^^^^
+    ...<6 lines>...
+        show=True,
+        ^^^^^^^^^^
+    )
+    ^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 'wrap' is not a valid keyword argument
+
+[2026-09-02 13:59:50]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(expr=text, re=regex, cs=case_sensitive, wo=whole_word, wrap=True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 'expr' is not a valid keyword argument
+
+[2026-09-02 14:00:49]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, re=regex, cs=case_sensitive, wo=whole_word, wrap=True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 14:00:49]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, re=regex, cs=case_sensitive, wo=whole_word, wrap=True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 14:00:49]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, re=regex, cs=case_sensitive, wo=whole_word, wrap=True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 14:00:50]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, re=regex, cs=case_sensitive, wo=whole_word, wrap=True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 14:00:50]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, re=regex, cs=case_sensitive, wo=whole_word, wrap=True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 14:00:50]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, re=regex, cs=case_sensitive, wo=whole_word, wrap=True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): 're' is not a valid keyword argument
+
+[2026-09-02 14:01:48]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, regex, case_sensitive, whole_word, True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): argument 'forward' has unexpected type 'NoneType'
+
+[2026-09-02 14:01:49]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, regex, case_sensitive, whole_word, True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): argument 'forward' has unexpected type 'NoneType'
+
+[2026-09-02 14:01:49]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, regex, case_sensitive, whole_word, True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): argument 'forward' has unexpected type 'NoneType'
+
+[2026-09-02 14:01:49]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 2006, in _do_find_prev
+    editor.findFirst(text, regex, case_sensitive, whole_word, True, forward=None, line=line, index=index, show=True, posix=False, cxx11=False)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: findFirst(self, expr: str, re: bool, cs: bool, wo: bool, wrap: bool, forward: bool = True, line: int = -1, index: int = -1, show: bool = True, posix: bool = False, cxx11: bool = False): argument 'forward' has unexpected type 'NoneType'
+
+[2026-09-02 16:22:23]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1172, in set_new_tab
+    editor = self.get_editor(path=path)
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 314, in get_editor
+    editor = PythonEditor(
+        path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+    )
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 96, in __init__
+    self.documentation_popup.set_documentation_font(self.window_font)
+                                                    ^^^^^^^^^^^^^^^^
+AttributeError: 'PythonEditor' object has no attribute 'window_font'
+
+[2026-09-02 16:22:54]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1172, in set_new_tab
+    editor = self.get_editor(path=path)
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 314, in get_editor
+    editor = PythonEditor(
+        path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+    )
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 96, in __init__
+    self.documentation_popup.set_documentation_font(self.window_font)
+                                                    ^^^^^^^^^^^^^^^^
+AttributeError: 'PythonEditor' object has no attribute 'window_font'
+
+[2026-09-02 16:22:55]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1172, in set_new_tab
+    editor = self.get_editor(path=path)
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 314, in get_editor
+    editor = PythonEditor(
+        path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+    )
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 96, in __init__
+    self.documentation_popup.set_documentation_font(self.window_font)
+                                                    ^^^^^^^^^^^^^^^^
+AttributeError: 'PythonEditor' object has no attribute 'window_font'
+
+[2026-09-02 16:22:56]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1172, in set_new_tab
+    editor = self.get_editor(path=path)
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 314, in get_editor
+    editor = PythonEditor(
+        path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+    )
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 96, in __init__
+    self.documentation_popup.set_documentation_font(self.window_font)
+                                                    ^^^^^^^^^^^^^^^^
+AttributeError: 'PythonEditor' object has no attribute 'window_font'

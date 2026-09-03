@@ -8,6 +8,9 @@ class MultiTabView(QSplitter):
     currentEditorChanged = pyqtSignal(object)       # Emitted whenever the active Editor changes
     closeEditorRequested = pyqtSignal(object)       # Emitted when the user presses the close button.
     editorMoved = pyqtSignal(object)                     # Emitted after an Editor moves from one tab group to another
+    # BUGFIX (new): emitted when the user right-clicks a tab group, so MainWindow
+    # can show its tab context menu (was previously unreachable dead code).
+    tabContextMenuRequested = pyqtSignal(object, 'QPoint')
     
     def __init__(self, parent=None):
         super().__init__(Qt.Horizontal, parent)
@@ -43,6 +46,13 @@ class MultiTabView(QSplitter):
         group.tabCloseRequested.connect(
             lambda index, tab_group=group:
             self._on_group_close_requested(tab_group, index)
+        )
+
+        # Right-clicks on a tab are forwarded to MainWindow via a signal
+        group.setContextMenuPolicy(Qt.CustomContextMenu)
+        group.customContextMenuRequested.connect(
+            lambda pos, tab_group=group:
+            self.tabContextMenuRequested.emit(tab_group, pos)
         )
         
         group.tabBar().installEventFilter(self)

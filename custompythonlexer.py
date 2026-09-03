@@ -1011,8 +1011,10 @@ class NeutronLexer(QsciLexerCustom):
 
 
 class PyCustomLexer(NeutronLexer):
-    def __init__(self, editor):
-        super(PyCustomLexer, self).__init__("Python", editor)
+    def __init__(self, editor, theme=None):
+        # `theme` accepts an absolute path to a theme .json chosen in the
+        # Settings dialog; None keeps the built-in default (themes/theme.json).
+        super(PyCustomLexer, self).__init__("Python", editor, theme=theme)
         self.setKeywords(keyword.kwlist)
         self.setBuiltinNames([
             name for name, obj in vars(builtins).items()

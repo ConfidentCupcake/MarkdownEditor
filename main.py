@@ -2,8 +2,10 @@ import json
 import os
 import sys
 from pathlib import Path
-
+import traceback
+import datetime
 import markdown
+
 from PyQt5.Qsci import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
@@ -24,6 +26,13 @@ from code_inteligence.code_outline import CodeOutlineTree
 
 APP_VERSION = "v1.9.2"
 
+def _excepthook(exc_type, exc, tb):
+    with open(resource_path("crash_log.txt"), "a", encoding="utf-8") as f:
+        f.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n")
+        traceback.print_exception(exc_type, exc, tb, file=f)
+    traceback.print_exception(exc_type, exc, tb) # also as stderr
+    
+sys.excepthook = _excepthook
 
 def resource_path(relative_path):
     """
@@ -115,6 +124,7 @@ class MainWindow(QMainWindow):
            pre { background:#1e1f22; padding:1em; border-radius:6px; overflow-x:auto; }
            """
         self.init_ui()
+        
         if hasattr(sys, "_MEIPASS"):
             # We're running as a bundled exe
             import os
@@ -122,6 +132,10 @@ class MainWindow(QMainWindow):
             home = os.path.expanduser("~")
             self.file_manager.model.setRootPath(home)
             self.file_manager.setRootIndex(self.file_manager.model.index(home))
+        # Reopen the tabs from the previous sessions (no-op when
+        # the feature is disabled or nothing was saved)
+        self._apply_settings(self._load_settings())
+        self._restore_session()
 
     def init_ui(self):
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu-shader-disk-cache"
@@ -155,7 +169,8 @@ class MainWindow(QMainWindow):
         self._outline_debounce = QTimer(self)
         self._outline_debounce.setSingleShot(True)
         self._outline_debounce.setInterval(500)
-        self._outline_debounce.timeout.connect(self._outline_debounce.start)
+        # BUGFIX: was connected to its own start() -> restarted itself forever
+        self._outline_debounce.timeout.connect(self._update_outline)
 
         self.set_up_menu()
         self.set_up_body()
@@ -296,11 +311,20 @@ class MainWindow(QMainWindow):
         if is_python_file:
             # A .py tab recieves the shared language-server client. Each tab creats its own RuffLspController,
             # but all controllers share this one QProcess
-            return PythonEditor(
+            editor = PythonEditor(
                 path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
             )
-        # Markdown documents never open an LSP Python document
-        return MarkdownEditor(path=path, is_python_file=False)
+        else:
+            # Markdown documents never open an LSP Python document
+            editor = MarkdownEditor(path=path, is_python_file=False)
+
+        # BUGFIX: a newly opened tab used the hard-coded __init__ look and
+        # ignored everything saved in the Settings dialog. Apply the saved
+        # settings (font, wrap, margins, theme) so every tab matches.
+        saved = getattr(self, "_current_settings", None)
+        if saved:
+            self._apply_editor_settings(editor, saved)
+        return editor
 
     def current_editor(self):
         """Return the editor focused in the active tab group."""
@@ -310,6 +334,7 @@ class MainWindow(QMainWindow):
         """Connect all MainWindow signals required by an editor."""
         editor.textChanged.connect(lambda ed=editor: self._on_editor_text_changed(ed))
         editor.textChanged.connect(self._debounce.start)
+        editor.textChanged.connect(self._outline_debounce.start)
         editor.textChanged.connect(self.update_word_count)
         editor.cursorPositionChanged.connect(
             lambda line, column, ed=editor: self._on_editor_cursor_changed(ed, line, column)
@@ -543,6 +568,12 @@ class MainWindow(QMainWindow):
         starting_window_size.setShortcut("Shift+F11")
         starting_window_size.setShortcutContext(Qt.ApplicationShortcut)
         starting_window_size.triggered.connect(self._startup_window_size)
+
+        view_menu.addSeparator()
+        settings_action = view_menu.addAction("Settings")
+        settings_action.setShortcut("Ctrl+Alt+S")
+        settings_action.setShortcutContext(Qt.ApplicationShortcut)
+        settings_action.triggered.connect(self.open_settings)
 
         help_menu = menu_bar.addMenu("Help")
 
@@ -931,8 +962,184 @@ class MainWindow(QMainWindow):
             except json.JSONDecodeError:
                 # A corrupted settings.jsón must never crash the app -- fallthrough with an empty dict and the defaults below
                 pass
-
         
+        # --- QSettings side --- #
+        # .value(key, default, type=) coerces the stored values: QSettings serialises booleans/ints as strings
+        # on some platforms, and the type= argument converts them back safely.
+        return {
+            "interpreter": data.get("interpreter", self.python_runner.interpreter),
+            # BUGFIX: read/write key mismatch - this read "ruff_safe_mode"
+            # while _save_settings() writes "ruff_save_mode", so the saved
+            # Ruff mode never survived a restart.
+            "ruff_save_mode": self.settings.value("ruff_save_mode", "safe_format", type=str),
+            "font_family": self.settings.value("font_family", "sans-serif", type=str),
+            "font_size": self.settings.value("font_size", 13, type=int),
+            "tab_width": self.settings.value("tab_width", 4, type=int),
+            "word_wrap": self.settings.value("word_wrap", False, type=bool),
+            "restore_tabs": self.settings.value("restore_tabs", True, type=bool),
+            "theme": self.settings.value("theme", "theme.json", type=str),
+            "line_numbers": self.settings.value("line_numbers", True, type=bool),
+            "highlight_line": self.settings.value("highlight_line", True, type=bool),
+        }
+        
+    def _save_settings(self, new_settings: dict):
+        """Persist an edited settings dictionary back to both stores.
+
+        The interpreter goes into settings.json (preserving any other
+        keys already in there); everything else becomes a QSettings key.
+        Called only after the user clicked Save in the dialog.
+
+        Parameters
+        ----------
+        new_settings : dict
+            The dictionary returned by SettingsDialog.get_settings().
+        """
+        import json
+
+        # --- settings.json: read-modify-write -------------------------- #
+        # Read the existing file first so unrelated keys survive.
+        settings_path = Path(__file__).parent / "settings.json"
+        data = {}
+        if settings_path.exists():
+            try:
+                data = json.loads(settings_path.read_text())
+            except json.JSONDecodeError:
+                pass
+        data["interpreter"] = new_settings["interpreter"]
+        settings_path.write_text(json.dumps(data, indent=2))
+
+        # --- QSettings -------------------------------------------------- #
+        for key in ("ruff_save_mode", "font_family", "font_size", "tab_width",
+                    "word_wrap", "restore_tabs", "theme", "line_numbers",
+                    "highlight_line"):
+            self.settings.setValue(key, new_settings[key])
+
+    def open_settings(self):
+        """Open the settings dialog and apply the result if Save was hit.
+
+        Flow: build dialog from current values → exec_() blocks until the
+        dialog closes → on Accepted, persist and apply. exec_() runs a
+        nested event loop, so the main window keeps painting while the
+        dialog is open, but no other user code in this method runs until
+        the dialog is dismissed (standard modal behaviour).
+        """
+        # Local import: the dialog module is only needed here, and a
+        # local import keeps startup time down and avoids a hard
+        # dependency if settings_dialog.py is temporarily broken.
+        from code_settings.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self._load_settings(), self)
+        if dialog.exec_() == QDialog.Accepted:
+            new_settings = dialog.get_settings()
+            self._save_settings(new_settings)
+
+            # ruff_save_mode is cached in __init__; keep the cache in
+            # sync so _run_ruff_before_save() sees the new value
+            # immediately (no restart needed).
+            self.ruff_save_mode = new_settings["ruff_save_mode"]
+
+            self._apply_settings(new_settings)
+            self.statusBar().showMessage("Settings saved", 2000)
+
+    def _apply_settings(self, settings: dict):
+        """
+        Push a settings dictionary onto every open editor.
+
+        MultiTabView.all_editors() yields the editors of ALL tab groups
+        (both halves of a split view), so one loop covers everything.
+        The settings are also cached on self so new tabs opened later
+        can inherit them via _apply_editor_settings().
+        """
+        self._current_settings = settings
+
+        for editor in self.tab_view.all_editors():
+            self._apply_editor_settings(editor, settings)
+
+        if settings["interpreter"]:
+            self.python_runner.set_interpreter(settings["interpreter"])
+            self.statusBar().showMessage(
+                f"Interpreter: {self.python_runner.interpreter}", 3000)
+
+    def _theme_path(self, theme_name):
+        """
+        Absolute path of a theme FILE NAME (e.g. 'theme.json') from the
+        themes/ folder next to main.py. Returns None when the file does
+        not exist, so the lexer falls back to its built-in default.
+        """
+        if not theme_name:
+            return None
+        base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) \
+            else Path(__file__).resolve().parent
+        candidate = base / "themes" / theme_name
+        return str(candidate) if candidate.is_file() else None
+
+    def _apply_editor_settings(self, editor, settings: dict):
+        """
+        Apply font/wrap/margin/theme settings to ONE editor.
+
+        Split out of _apply_settings() so newly opened tabs (get_editor)
+        can receive the same look without duplicating this code.
+        """
+        from PyQt5.Qsci import QsciScintilla
+        from markdowneditor import MarkdownEditor
+        from pythoneditor import PythonEditor
+        from markdowncustomlexer import MarkdownCustomLexer
+        from custompythonlexer import PyCustomLexer
+
+        # One shared QFont object per apply - every widget gets its own
+        # implicit copy on assignment, so sharing one instance is safe.
+        font = QFont(settings["font_family"])
+        font.setPointSize(settings["font_size"])
+
+        # QsciScintilla.WrapWord soft-wraps at the right edge;
+        # WrapNone keeps the horizontal scrollbar behaviour.
+        wrap = (QsciScintilla.WrapWord if settings["word_wrap"]
+                else QsciScintilla.WrapNone)
+
+        # Both editor classes store their font in .window_font (set
+        # in their __init__), so keep that attribute consistent too -
+        # _convert_current_tab and other code read it.
+        editor.window_font = QFont(font)
+        editor.setFont(font)
+        editor.setMarginsFont(font)          # line-number gutter font
+        editor.setTabWidth(settings["tab_width"])
+        editor.setWrapMode(wrap)
+        editor.setCaretLineVisible(settings["highlight_line"])
+
+        # Margin 0 is the line-number gutter. Width "0000" fits a
+        # 4-digit line count; width 0 collapses it entirely.
+        if settings["line_numbers"]:
+            editor.setMarginWidth(0, "0000")
+        else:
+            editor.setMarginWidth(0, 0)
+
+        # Recreate the lexer so a theme switch takes effect now.
+        # A QScintilla can only host ONE lexer at a time; the old one is
+        # replaced on the C++ side by setLexer().  BUGFIX: the selected
+        # theme is now actually passed to the lexers (they previously
+        # always loaded the default themes/theme.json).
+        theme_path = self._theme_path(settings.get("theme"))
+        if isinstance(editor, MarkdownEditor):
+            editor.md_lexer = MarkdownCustomLexer(editor, theme=theme_path)
+            editor.md_lexer.setFont(font)
+            editor.setLexer(editor.md_lexer)
+        elif isinstance(editor, PythonEditor):
+            editor.py_lexer = PyCustomLexer(editor, theme=theme_path)
+            editor.py_lexer.setDefaultFont(font)
+            editor.setLexer(editor.py_lexer)
+            # QsciAPIs is bound to the lexer instance it was created with,
+            # so reattach a fresh one to the new lexer. The AutoCompleter
+            # thread repopulates the word list as soon as the user types.
+            from PyQt5.Qsci import QsciAPIs
+            if getattr(editor, "_api", None) is not None:
+                editor._api = QsciAPIs(editor.py_lexer)
+
+        # BUGFIX: attaching a new lexer resets Scintilla's default
+        # styles, which also wipes the line-number gutter colors - that
+        # is why the gutter turned white after saving. Re-apply AFTER
+        # setLexer(), otherwise the lexer default (white) wins.
+        editor.setMarginsForegroundColor(QColor("#ff888888"))
+        editor.setMarginsBackgroundColor(QColor("#1e1f22"))
     def is_binary(self, path):
         """
         check if a file is binary
@@ -1033,6 +1240,8 @@ class MainWindow(QMainWindow):
         self.tab_view.setContentsMargins(0, 0, 0, 0)
         self.tab_view.currentEditorChanged.connect(self._on_current_editor_changed)
         self.tab_view.closeEditorRequested.connect(self.close_editor)
+        # BUGFIX: the tab context menu was never wired up - connect it here.
+        self.tab_view.tabContextMenuRequested.connect(self._show_tab_context_menu)
 
         # editor_container = QWidget()
         # editor_layout = QStackedWidget(editor_container)
@@ -1180,34 +1389,32 @@ class MainWindow(QMainWindow):
             editor.ensureLineVisible(line)
             editor.setFocus()            
         
-    def _show_tab_context_menu(self, pos: QPoint):
+    # BUGFIX: this whole block used the plain QTabWidget API (tabBar(), count(),
+    # widget(index), close_tab()) which does not exist on MultiTabView, and
+    # close_tab() was never defined at all -> AttributeError/NameError on every
+    # menu action. Rewritten to work on editor objects via MultiTabView's real API.
+
+    def _show_tab_context_menu(self, group, pos: QPoint):
         """
         Show a context menu when the user right-clicks a tab.
 
-        `pos` is relative to the QTabWidget.
-        We need to fing which tab was clicked using the tab bar.
-        :return:
+        `group` is the QTabWidget (tab group) the click happened in,
+        `pos` is the click position in that group's coordinates.
         """
-        # The QTabWidget has an internal QTabBar that holds the actual tab buttons.
-        # We need to ask it which tab is at the click position.
-        # But first, convert the pos from QTabWidget coordinates to QTabBar coordinates.
-        # mapTo converts a point from one widget's coordinate system to another's.
-        # Docs: https://doc.qt.io/qt-5/qwidget.html#mapTo
-
-        tab_bar = self.tab_view.tabBar()
+        tab_bar = group.tabBar()
         # Convert the click position from QTabWidget coords to QTabBar coords
-        bar_pos = tab_bar.mapFrom(self.tab_view, pos)
+        bar_pos = tab_bar.mapFrom(group, pos)
         index = tab_bar.tabAt(bar_pos)
 
         if index < 0:
             # User clicked somewhere that's not a tab (e.g. the empty space after tabs)
             return
 
-        # Create the context menu
-        # QMenu is a popup menu. You add actions to it and call exec_ to show it.
-        # Docs: https://doc.qt.io/qt-5/qmenu.html
-        menu = QMenu(self)
+        editor = group.widget(index)
+        if editor is None:
+            return
 
+        menu = QMenu(self)
         close_action = menu.addAction("Close")
         close_others_action = menu.addAction("Close Others")
         close_all_action = menu.addAction("Close All")
@@ -1215,51 +1422,43 @@ class MainWindow(QMainWindow):
         copy_path_action = menu.addAction("Copy Path")
         reveal_action = menu.addAction("Reveal in File Manager")
 
-        # exec_ shows the menu at the global screen position and blocks
-        # until the user selects an item or clicks away.
-        # mapToGlobal converts a local position to screen coordinates.
-        # Docs: https://doc.qt.io/qt-5/qmenu.html#exec
-        action = menu.exec_(self.tab_view.mapToGlobal(pos))
+        action = menu.exec_(group.mapToGlobal(pos))
 
         if action == close_action:
-            self.close_tab(index)
+            self.close_editor(editor)
         elif action == close_others_action:
-            self._close_other_tabs(index)
+            self._close_other_tabs(editor)
         elif action == close_all_action:
             self._close_all_tabs()
         elif action == copy_path_action:
-            self._copy_tab_path(index)
+            self._copy_tab_path(editor)
         elif action == reveal_action:
-            self._reveal_tab_in_file_manager(index)
+            self._reveal_tab_in_file_manager(editor)
 
-    def _close_other_tabs(self, keep_index: int):
-        """Close all tabs except the one at keep_index."""
-        # Close tabs from right to left so indices don't shift
-        # If you close from left to right, removing tab 0 makes tab 1 become tab 0,
-        # and your keep_index would point at the wrong tab.
-        for i in range(self.tab_view.count() - 1, -1, -1):
-            if i != keep_index:
-                self.close_tab(i)
+    def _close_other_tabs(self, keep_editor):
+        """Close all tabs except the one holding `keep_editor` (across all split groups)."""
+        for editor in list(self.tab_view.all_editors()):
+            if editor is not keep_editor:
+                # close_editor returns False only when the user cancels the
+                # save prompt - stop closing in that case.
+                if self.close_editor(editor) is False:
+                    break
 
     def _close_all_tabs(self):
-        """Close every open tab."""
-        for i in range(self.tab_view.count() - 1, -1, -1):
-            self.close_tab(i)
+        """Close every open tab (across all split groups)."""
+        for editor in list(self.tab_view.all_editors()):
+            if self.close_editor(editor) is False:
+                break
 
-    def _copy_tab_path(self, index: int):
-        """Copy the file path of the tab at `index` to the clipboard."""
-        editor = self.tab_view.widget(index)
+    def _copy_tab_path(self, editor):
+        """Copy the file path of the tab's editor to the clipboard."""
         path = getattr(editor, "path", None)
         if path is not None:
-            # QApplication.clipboard() gives access to the system clipboard
-            # setText() puts text on it
-            # Docs: https://doc.qt.io/qt-5/qclipboard.html#setText
             QApplication.clipboard().setText(str(path))
             self.statusBar().showMessage(f"Copied: {path}", 2000)
 
-    def _reveal_tab_in_file_manager(self, index: int):
-        """Open the OS file manager at the file's location."""
-        editor = self.tab_view.widget(index)
+    def _reveal_tab_in_file_manager(self, editor):
+        """Open the OS file manager at the editor file's location."""
         path = getattr(editor, "path", None)
         if path is None:
             return
@@ -1365,7 +1564,8 @@ class MainWindow(QMainWindow):
 
             if is_directory:
                 if editor_path == old_path:
-                    updated_path == new_path
+                    # BUGFIX: '==' (comparison) instead of '=' (assignment) -> UnboundLocalError
+                    updated_path = new_path
                 elif old_path in editor_path.parents:
                     relative_path = editor_path.relative_to(old_path)
                     updated_path = new_path / relative_path
@@ -1781,21 +1981,22 @@ class MainWindow(QMainWindow):
         editor = self.current_editor()
         if editor is None:
             return
+
         line, index = editor.getCursorPosition()
         # getCursorPosition returns (line, index) as a tuple
         # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a2d0e8b6e0a3e3a9c0e3a3e3a3e3a3e3a
 
         editor.findFirst(
-            text,  # the search string or regex
-            regex,  # is it a regex?
-            case_sensitive,  # case-sensitive?
-            whole_word,  # whole-word match only?
-            True,  # wrap around to top when reaching bottom?
-            True,  # search forward?
-            line,  # start line
-            index,  # start column
-            True,  # show the match (scroll to it)?
-            False,  # POSIX regex mode (False = use Python regex)
+            text,           # the search string or regex
+            regex,          # is it a regex?
+            case_sensitive, # case-sensitive?
+            whole_word,     # whole-word match only?
+            True,           # wrap around to top when reaching bottom?
+            True,           # search forward?
+            line,           # start line
+            index,          # start column
+            True,           # show the match (scroll to it)?
+            False           # POSIX regex mode (False = use Python regex)
         )
 
     def _do_find_prev(self, text, case_sensitive, whole_word, regex):
@@ -1811,14 +2012,13 @@ class MainWindow(QMainWindow):
             regex,
             case_sensitive,
             whole_word,
-            True,  # wrap around
-            True,  # search BACKWARD
-            line,
-            index,
-            True,  # show the match
-            False,
-        )        
-        print("Found Previous")        
+            True,    # wrap around
+            False,   # search BACKWARD
+            line - 1,
+            index - 1,
+            True,    # show the match
+            False
+        )
 
     def _do_replace(self, find_text, replace_text, case_sensitive, whole_word, regex):
         """Replace the currently selected match, then find the next one."""
@@ -1877,10 +2077,128 @@ class MainWindow(QMainWindow):
             self.python_runner.stop()
         if hasattr(self, "settings"):
             self.settings.setValue("recent_files", self.recent_files)
-
         self.ruff_lsp_client.shutdown()
-
         super().closeEvent(event)
+        
+    def save_session(self):
+        """
+        Persist the open-tab layout so the next launch can restore it.
+        
+        The session is stored as One JSON string under QSettings key "session"
+        (QSettings cannot reliably round-trip nested Python dicts, but strings are always safe.
+        
+        Saved per tab:
+            path -> absolute file path; untitled editors (path=None) are skipped,
+                    they cannot be reopened from disk.
+            python -> True if the tab is a PythonEditor. Needed because set_new_tab() picks the editor class
+                      from the self.python_editor_active flag, so the flag must be flipped per file during restore.
+            group -> index of the split group (0 = left/first group)
+                     so a split layout survives a restart.
+                     
+        Also saved:
+            active  -> path of the focused tab (re-focused on restore)
+            python_mode -> the global mode flag, so NEW files open after a restart behave as before.
+        
+        Silently does nothing when the user disabled session restore in the Settings dialog
+        (QSettings key "restore_tabs").
+        """
+        import json
+        if not self.settings.value("restore_tabs", True, type=bool):
+            return
+        
+        # group() returns the life QTabWidgets in left-to-right order;
+        # its index for an editor's group is exactly the number we save.
+        groups = list(self.tab_view.groups())
+        tabs= []
+        
+        for editor in self.tab_view.all_editors():
+            path = getattr(editor, "path", None)
+            if path is None:
+                continue
+            group = self.tab_view.group_for_editor(editor)
+            tabs.append({
+                "path": str(path),
+                # isinstance() is the ground truth: the class IS the mode.
+                "python": isinstance(editor, PythonEditor),
+                "group": groups.index(group) if group in groups else 0,
+                })
+            
+            active = self.current_editor()
+            active_path = getattr(active, "path", None)
+            session = {
+                "tabs": tabs,
+                "active": str(active_path) if active_path is not None else None,
+                "python_mode": self.python_editor_active,
+                }
+            self.settings.setValue("session", json.dumps(session))
+            
+    def _restore_session(self):
+        """
+        Reopen the tabs saved by _save_session().
+        
+        Strategy:
+        1.  Parse the stored JSON (any error -> give up silently; a fresh session is always
+            a valid state).
+        2.  Create enough tab groups to reproduce the split layout.
+        3.  Reopen each file with set_new_tab(), flipping self.python_editor_active
+            per file so each tab gets the right editor class.
+        4.  Re-focus the tab that was active at close time.
+        
+        set_new_tab() already handles the hard parts for us: binary-file rejection,
+        duplicate detection (find_editor_by_path), recent-file bookkeeping and dirty-state signal wiring.
+        """
+        import json
+        
+        if not self.settings.value("restore_tabs", True, type=bool):
+            return
+        
+        raw = self.settings.value("session", "", type=str)
+        if not raw:
+            return
+        
+        try:
+            session = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return
+        
+        tabs = session.get("tabs", [])
+        if not tabs:
+            return
+        
+        # --- 2. Recreate the split layout --- #
+        # Tab gourps are created lazily by MultiTabView; to place tab into group 2 we must make sure 
+        # groups 0..2 exist first. _create_group() is techincally private - optionally rename it to 
+        # create_group() in multi_tab_view.py and update this call 
+        # (plus its two internal callers) to keep things clean.
+        max_group = max(entry["group"] for entry in tabs)
+        while len(self.tab_view.groups()) <= max_group:
+            self.tab_view._create_group()
+        groups = list(self.tab_view.groups())
+        
+        # --- 2. Reopen every tab --- #
+        active_editor = None
+        for entry in tabs:
+            path = Path(entry["path"])
+            if not path.is_file():
+                continue # delete/move since last session - skip it
+            
+            # set_new_tab() branches on self.python_editor_active to choose PythonEditor vs MarkdownEditor.
+            # Setting it per file restores each tab in the mode it was last edited with.
+            self.python_editor_active = entry["python"]
+            editor = self.set_new_tab(path, target_group=groups[entry["group"]])
+            if editor is not None and session.get("active") == str(path):
+                active_editor = editor
+            
+        # --- 3. Restore the global mode + focus --- #
+        # The global flag governs NEW tabs opened after startup, so it refelcts
+        # the mode the app was in at close time.
+        self.python_editor_active = session.get("python_mode", False)
+        
+        if active_editor is not None:
+            self.tab_view.focus_editor(active_editor)
+        
+        self.statusBar().showMessage(f"Restore {len(tabs)} tabs from last session", 5000)
+        
 
     def check_for_updates(self):
         """
@@ -1956,7 +2274,6 @@ class MainWindow(QMainWindow):
             # webbrowser.open opens the URL in the user's default browser
             # Docs: https://docs.python.org/3/library/webbrowser.html#webbrowser.open
             import webbrowser
-
             webbrowser.open(download_url)
 
 

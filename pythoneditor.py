@@ -408,13 +408,19 @@ class PythonEditor(QsciScintilla):
         if self._shutting_down:
             return
 
-        # Get the cursor's screen position for the tooltip
-        # SendScintilla(2025, line) = SCI_VISIBLEFROMDOCWRAP - not what we need
-        # Instead, use the point from the cursor position
+        # BUGFIX: self.cursorPos() does not exist in the PyQt5 QScintilla
+        # binding -> AttributeError (hard crash inside a Qt slot) every time
+        # a signature became ready. Query the caret's pixel position through
+        # SendScintilla instead:
+        #   2008 = SCI_GETCURRENTPOS (byte offset of the caret)
+        #   2164 = SCI_POINTXFROMPOSITION, 2165 = SCI_POINTYFROMPOSITION
         from PyQt5.QtCore import QPoint
 
-        cursor_pos = self.cursorPos()  # This returns a QPoint in some QScintillia verions
-        point = self.mapToGlobal(QPoint(50, 50))  # approximate position
+        caret = self.SendScintilla(2008)
+        point = self.mapToGlobal(QPoint(
+            self.SendScintilla(2164, caret),
+            self.SendScintilla(2165, caret) - 20,  # slightly above the caret line
+        ))
         QToolTip.showText(point, signature, self)
 
     def _on_signature_empty(self):

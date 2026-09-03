@@ -191,11 +191,12 @@ class FindReplaceBar(QWidget):
         # Enter in find input -> find next
         # returnPressed is a built-in QLineEdit signal
         # Docs: https://doc.qt.io/qt-5/qlineedit.html#returnPressed
-        self.find_input.returnPressed.connect(self._on_find_next)
+        next_find = QShortcut(QKeySequence(Qt.Key.Key_Down), self.find_input)
+        next_find.activated.connect(self._on_find_next)
 
         # Shift+Enter → find previous
-        shortcut = QShortcut(QKeySequence("Shift+Return"), self.find_input)
-        shortcut.activated.connect(self._on_find_prev)
+        prev_find = QShortcut(QKeySequence(Qt.Key.Key_Up), self.find_input)
+        prev_find.activated.connect(self._on_find_prev)
 
         # Escape → close
         esc_shortcut = QShortcut(QKeySequence("Escape"), self)
