@@ -12,17 +12,17 @@ from PyQt5.QtGui import *
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import *
 
-from console_widget import ConsoleWidget
-from file_manager import FileManager
-from find_replace import FindReplaceBar
-from fuzzy_searcher import SearchItem, SearchWorker
-from markdowneditor import MarkdownEditor
-from multi_tab_view import MultiTabView
-from python_runner import PythonRunner
-from pythoneditor import PythonEditor
-from ruff_lsp_client import RuffLspClient
-from terminal_widget import TerminalWidget
-from code_inteligence.code_outline import CodeOutlineTree
+from con_term.console_widget import ConsoleWidget
+from side_bar_widgets.file_manager import FileManager
+from code_inteligence.find_replace import FindReplaceBar
+from side_bar_widgets.fuzzy_searcher import SearchItem, SearchWorker
+from markdown_editor.markdowneditor import MarkdownEditor
+from code_inteligence.multi_tab_view import MultiTabView
+from python_editor.python_runner import PythonRunner
+from python_editor.pythoneditor import PythonEditor
+from ruff_implementation.ruff_lsp_client import RuffLspClient
+from con_term.terminal_widget import TerminalWidget
+from side_bar_widgets.code_outline import CodeOutlineTree
 
 APP_VERSION = "v1.9.2"
 
@@ -966,14 +966,27 @@ class MainWindow(QMainWindow):
         # --- QSettings side --- #
         # .value(key, default, type=) coerces the stored values: QSettings serialises booleans/ints as strings
         # on some platforms, and the type= argument converts them back safely.
+        #
+        # THEME-MANAGED values: font family/size and the paper color are NOT
+        # stored in QSettings anymore — the active theme.json is their single
+        # source of truth (read here, written by _write_theme_editor()).
+        theme_editor = self._read_theme_editor()
+
         return {
             "interpreter": data.get("interpreter", self.python_runner.interpreter),
             # BUGFIX: read/write key mismatch - this read "ruff_safe_mode"
             # while _save_settings() writes "ruff_save_mode", so the saved
             # Ruff mode never survived a restart.
             "ruff_save_mode": self.settings.value("ruff_save_mode", "safe_format", type=str),
-            "font_family": self.settings.value("font_family", "sans-serif", type=str),
-            "font_size": self.settings.value("font_size", 13, type=int),
+            "font_family": theme_editor.get("font_family", "JetBrains Mono"),
+            "font_size": theme_editor.get("font_size", 13),
+            # paper: QSettings override (color picker) wins over the theme;
+            # theme_paper is the theme's OWN value, so the dialog's
+            # "Reset to theme" button can drop the override.
+            "paper_color": self.settings.value(
+                "paper_color", theme_editor.get("paper_color", "#1e1f22"),
+                type=str),
+            "theme_paper": theme_editor.get("paper_color", "#1e1f22"),
             "tab_width": self.settings.value("tab_width", 4, type=int),
             "word_wrap": self.settings.value("word_wrap", False, type=bool),
             "restore_tabs": self.settings.value("restore_tabs", True, type=bool),
@@ -1009,7 +1022,9 @@ class MainWindow(QMainWindow):
         settings_path.write_text(json.dumps(data, indent=2))
 
         # --- QSettings -------------------------------------------------- #
-        for key in ("ruff_save_mode", "font_family", "font_size", "tab_width",
+        # NOTE: font_family / font_size are NOT QSettings keys anymore —
+        # they live in the active theme.json (see _write_theme_editor()).
+        for key in ("ruff_save_mode", "tab_width",
                     "word_wrap", "restore_tabs", "theme", "line_numbers",
                     "highlight_line"):
             self.settings.setValue(key, new_settings[key])
@@ -1031,6 +1046,21 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self._load_settings(), self)
         if dialog.exec_() == QDialog.Accepted:
             new_settings = dialog.get_settings()
+
+            # Font changes are persisted INTO the active theme.json (its
+            # editor.font block) — the theme is the single source of truth.
+            # Everything else still goes through _save_settings/QSettings.
+            if (new_settings["font_family"], new_settings["font_size"]) != \
+                    (self._current_settings.get("font_family"),
+                     self._current_settings.get("font_size")):
+                self._write_theme_editor(new_settings["font_family"],
+                                         new_settings["font_size"])
+
+            # Paper color: stored as a QSettings override on top of the
+            # theme (the color picker choice wins until reset to default).
+            self.settings.setValue("paper_color",
+                                    new_settings["paper_color"])
+
             self._save_settings(new_settings)
 
             # ruff_save_mode is cached in __init__; keep the cache in
@@ -1060,6 +1090,68 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Interpreter: {self.python_runner.interpreter}", 3000)
 
+    def _active_theme_path(self):
+        """Absolute path of the theme file the settings currently name."""
+        return self._theme_path(
+            self.settings.value("theme", "theme.json", type=str))
+
+    def _read_theme_editor(self) -> dict:
+        """
+        Read the editor section of the ACTIVE theme (font + paper).
+
+        Returns a flat dict with font_family / font_size / paper_color so
+        _load_settings can hand them to the Settings dialog like any other
+        value. Falls back to JetBrains Mono 13 / #1e1f22 when the theme has
+        no editor section (old themes keep working).
+
+        The theme file is the single source of truth for these values —
+        QSettings only stores WHICH theme is active.
+        """
+        path = self._active_theme_path() or \
+            str(Path(__file__).resolve().parent / "themes" / "theme.json")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            editor = data.get("theme", {}).get("editor", {})
+            gfont = editor.get("font", {})
+            return {
+                "font_family": gfont.get("family", "JetBrains Mono"),
+                "font_size": int(gfont.get("font-size", 13)),
+                "paper_color": editor.get("paper-color", "#1e1f22"),
+            }
+        except (OSError, json.JSONDecodeError, ValueError):
+            return {"font_family": "JetBrains Mono", "font_size": 13,
+                    "paper_color": "#1e1f22"}
+
+    def _write_theme_editor(self, font_family: str, font_size: int) -> None:
+        """
+        Persist a font change INTO the active theme.json.
+
+        This is the write side of the theme-as-source-of-truth model the
+        user chose: the Settings dialog edits the theme file itself, so a
+        font choice belongs to that theme and switching themes switches
+        the font with it. Family and size are written to the GLOBAL
+        editor.font block; per-style italic/weight in the syntax section
+        are untouched.
+
+        :param font_family: e.g. "JetBrains Mono"
+        :param font_size: point size
+        """
+        path = self._active_theme_path()
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            editor = data.setdefault("theme", {}).setdefault("editor", {})
+            editor.setdefault("font", {})
+            editor["font"]["family"] = font_family
+            editor["font"]["font-size"] = int(font_size)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except (OSError, json.JSONDecodeError) as e:
+            self.statusBar().showMessage(f"Could not write theme: {e}", 4000)
+
     def _theme_path(self, theme_name):
         """
         Absolute path of a theme FILE NAME (e.g. 'theme.json') from the
@@ -1081,27 +1173,29 @@ class MainWindow(QMainWindow):
         can receive the same look without duplicating this code.
         """
         from PyQt5.Qsci import QsciScintilla
-        from markdowneditor import MarkdownEditor
-        from pythoneditor import PythonEditor
-        from markdowncustomlexer import MarkdownCustomLexer
-        from custompythonlexer import PyCustomLexer
+        from markdown_editor.markdowneditor import MarkdownEditor
+        from python_editor.pythoneditor import PythonEditor
+        from markdown_editor.markdowncustomlexer import MarkdownCustomLexer
+        from python_editor.custompythonlexer import PyCustomLexer
 
-        # One shared QFont object per apply - every widget gets its own
-        # implicit copy on assignment, so sharing one instance is safe.
-        font = QFont(settings["font_family"])
-        font.setPointSize(settings["font_size"])
+        # THEME-MANAGED STYLING: font family/size and the paper color now
+        # come from the theme's editor section (the Settings dialog writes
+        # them there — see _write_theme_editor). The lexers apply them to
+        # every style themselves; main.py no longer fights the lexer with
+        # editor-level font overrides. That fight is exactly why the old
+        # code "worked" for Markdown (setFont on ALL styles) but was
+        # invisible on Python (setDefaultFont only touched style 0).
+
+        # Paper override from the Settings color picker (QSettings key,
+        # wins over the theme's own paper until reset to default).
+        paper = QColor(settings["paper_color"]) if settings.get("paper_color") \
+            else None
 
         # QsciScintilla.WrapWord soft-wraps at the right edge;
         # WrapNone keeps the horizontal scrollbar behaviour.
         wrap = (QsciScintilla.WrapWord if settings["word_wrap"]
                 else QsciScintilla.WrapNone)
 
-        # Both editor classes store their font in .window_font (set
-        # in their __init__), so keep that attribute consistent too -
-        # _convert_current_tab and other code read it.
-        editor.window_font = QFont(font)
-        editor.setFont(font)
-        editor.setMarginsFont(font)          # line-number gutter font
         editor.setTabWidth(settings["tab_width"])
         editor.setWrapMode(wrap)
         editor.setCaretLineVisible(settings["highlight_line"])
@@ -1113,33 +1207,30 @@ class MainWindow(QMainWindow):
         else:
             editor.setMarginWidth(0, 0)
 
-        # Recreate the lexer so a theme switch takes effect now.
-        # A QScintilla can only host ONE lexer at a time; the old one is
-        # replaced on the C++ side by setLexer().  BUGFIX: the selected
-        # theme is now actually passed to the lexers (they previously
-        # always loaded the default themes/theme.json).
+        # Recreate the lexer so a theme switch (or font change written
+        # into the theme) takes effect now. A QScintilla can only host
+        # ONE lexer at a time; the old one is replaced on the C++ side
+        # by setLexer().
         theme_path = self._theme_path(settings.get("theme"))
         if isinstance(editor, MarkdownEditor):
-            editor.md_lexer = MarkdownCustomLexer(editor, theme=theme_path)
-            editor.md_lexer.setFont(font)
+            editor.md_lexer = MarkdownCustomLexer(editor, theme=theme_path,
+                                                  paper=paper)
             editor.setLexer(editor.md_lexer)
+            # Re-push the theme's editor-wide look (font, margins, caret,
+            # paper). The editor's own method handles the reset-a-lexer-
+            # wipes-margin-colors problem in exactly one place.
+            editor._apply_theme_editor_style()
         elif isinstance(editor, PythonEditor):
-            editor.py_lexer = PyCustomLexer(editor, theme=theme_path)
-            editor.py_lexer.setDefaultFont(font)
+            editor.py_lexer = PyCustomLexer(editor, theme=theme_path,
+                                            paper=paper)
             editor.setLexer(editor.py_lexer)
+            editor._apply_theme_editor_style()
             # QsciAPIs is bound to the lexer instance it was created with,
             # so reattach a fresh one to the new lexer. The AutoCompleter
             # thread repopulates the word list as soon as the user types.
             from PyQt5.Qsci import QsciAPIs
             if getattr(editor, "_api", None) is not None:
                 editor._api = QsciAPIs(editor.py_lexer)
-
-        # BUGFIX: attaching a new lexer resets Scintilla's default
-        # styles, which also wipes the line-number gutter colors - that
-        # is why the gutter turned white after saving. Re-apply AFTER
-        # setLexer(), otherwise the lexer default (white) wins.
-        editor.setMarginsForegroundColor(QColor("#ff888888"))
-        editor.setMarginsBackgroundColor(QColor("#1e1f22"))
     def is_binary(self, path):
         """
         check if a file is binary

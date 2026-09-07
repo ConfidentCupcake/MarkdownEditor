@@ -3,19 +3,19 @@ from pathlib import Path
 
 from PyQt5.Qsci import QsciAPIs, QsciScintilla
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QKeyEvent, QMouseEvent
+from PyQt5.QtGui import QColor, QKeyEvent, QMouseEvent
 from PyQt5.QtWidgets import QToolTip
 
-from autocompleter import AutoCompleter
+from code_inteligence.autocompleter import AutoCompleter
 from custompythonlexer import PyCustomLexer
-from definition_finder import DefinitionFinder
-from documentation_popup import DocumentationPopup
-from hover_helper import HoverHelper
-from signature_helper import SignatureHelper
-from indentation_helper import indentation_for_new_line
+from code_inteligence.definition_finder import DefinitionFinder
+from code_inteligence.documentation_popup import DocumentationPopup
+from code_inteligence.hover_helper import HoverHelper
+from code_inteligence.signature_helper import SignatureHelper
+from code_inteligence.indentation_helper import indentation_for_new_line
 
-from ruff_diagnostics_view import RuffDiagnosticView
-from ruff_lsp_controller import RuffLspController
+from ruff_implementation.ruff_diagnostics_view import RuffDiagnosticView
+from ruff_implementation.ruff_lsp_controller import RuffLspController
 
 SCI_AUTOCACTIVE = 2102
 
@@ -47,9 +47,10 @@ class PythonEditor(QsciScintilla):
 
         self.setUtf8(True)
 
-        self.window_font = QFont("JetBrains Mono")
-        self.window_font.setPointSize(13)
-        self.setFont(self.window_font)
+        # NOTE: no editor-level font anymore. The theme (via the lexer)
+        # owns family, size, colors and paper — one source of truth.
+        # The lexer is created below; helpers on it (editor_font(),
+        # editor_color()) supply the margins/popup/caret values.
 
         self.setBraceMatching(QsciScintilla.SloppyBraceMatch)
         self.setIndentationGuides(True)
@@ -66,6 +67,10 @@ class PythonEditor(QsciScintilla):
         self.setAutoCompletionCaseSensitivity(False)
         self.setAutoCompletionUseSingle(QsciScintilla.AcusNever)
 
+        # Caret styling defaults; replaced by theme values once the lexer
+        # exists (see _apply_theme_editor_style below + _apply_editor_settings
+        # in main.py after a lexer swap). Kept as safe fallbacks so the
+        # widget is never unstyled before a theme loads.
         self.setCaretForegroundColor(QColor("#f31122"))
         self.setCaretLineVisible(True)
         self.setCaretLineBackgroundColor(QColor("#3d424d"))
@@ -94,8 +99,16 @@ class PythonEditor(QsciScintilla):
             # Jedi analysis is its worker thread and emits plain text results.
             # Create one popup for this editor tab. Passing self as parent means
             # Qt cleans it up automatically when this PythonEditor is destroyed.
+            # The lexer loads the theme itself — font, colors and paper all
+            # come from themes/theme.json (or the theme chosen in Settings).
+            # Created FIRST so everything below can read its theme helpers.
+            self.py_lexer = PyCustomLexer(self)
+
             self.documentation_popup = DocumentationPopup(self)
-            self.documentation_popup.set_documentation_font(self.window_font)
+            # Popup font follows the theme's global editor font (the old
+            # self.window_font is gone — the lexer owns fonts now).
+            self.documentation_popup.set_documentation_font(
+                self.py_lexer.editor_font())
 
             self._hover_timer = QTimer(self)
             self._hover_timer.setSingleShot(True)
@@ -103,8 +116,7 @@ class PythonEditor(QsciScintilla):
             self._hover_timer.timeout.connect(self._trigger_hover)
             self.setMouseTracking(True)
 
-            self.py_lexer = PyCustomLexer(self)
-            self.py_lexer.setDefaultFont(self.window_font)
+            self._apply_theme_editor_style()
 
             self._api = QsciAPIs(self.py_lexer)
             self.auto_completer = AutoCompleter(
@@ -115,6 +127,8 @@ class PythonEditor(QsciScintilla):
 
             self.setLexer(self.py_lexer)
         else:
+            # No lexer in this mode yet (tab not converted): neutral defaults.
+            # Once a lexer attaches, _apply_theme_editor_style takes over.
             self.setPaper(QColor("#1e1f22"))
             self.setColor(QColor("#abb2bf"))
 
@@ -139,11 +153,44 @@ class PythonEditor(QsciScintilla):
         )
         self.setMarginMarkerMask(1, ruff_marker_mask)
 
-        self.setMarginsForegroundColor(QColor("#ff888888"))
-        self.setMarginsBackgroundColor(QColor("#1e1f22"))
-        self.setMarginsFont(self.window_font)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setWrapMode(QsciScintilla.WrapNone)
+
+        # Final theme application (font, margins, caret, paper) — AFTER all
+        # margin setup so nothing overrides it. The old hardcoded
+        # setMarginsForegroundColor/BackgroundColor/setMarginsFont lines
+        # that used to live here are replaced by this one theme-driven call.
+        if getattr(self, "py_lexer", None) is not None:
+            self._apply_theme_editor_style()
+
+    def _apply_theme_editor_style(self):
+        """
+        Push the theme's editor-section styling onto this widget.
+
+        Called once at the end of __init__ (margin setup) and again by
+        main.py's _apply_editor_settings() after a lexer swap (a fresh
+        lexer resets Scintilla's style table, which wipes margin colors —
+        the gutter-turns-white bug, now handled in exactly one place).
+
+        Reads everything through the lexer so the theme stays the single
+        source of truth: global editor font (family+size), paper, caret,
+        caret-line highlight, and the line-number margin colors.
+        """
+        lexer = self.py_lexer
+        f = lexer.editor_font()
+        self.setFont(f)                    # STYLE_DEFAULT; lexer styles inherit it
+        self.setMarginsFont(f)
+        self.setPaper(lexer.defaultPaper())
+        self.setCaretForegroundColor(
+            lexer.editor_color("caret-color", "#f31122"))
+        self.setCaretLineBackgroundColor(
+            lexer.editor_color("caret-line-background", "#3d424d"))
+        self.setMarginsForegroundColor(
+            lexer.editor_color("margin-foreground", "#ff888888"))
+        self.setMarginsBackgroundColor(
+            lexer.editor_color("margin-background", "#1e1f22"))
+        if hasattr(self, "documentation_popup") and self.documentation_popup:
+            self.documentation_popup.set_documentation_font(f)
 
     def _trigger_hover(self):
         """Called 500 ms after the mouse stopped moving. Run Jedi."""

@@ -1,11 +1,11 @@
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QTextCursor, QTextCharFormat
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
     QLineEdit, QPushButton, QLabel
 )
 
-from python_runner import PythonRunner
+from python_editor.python_runner import PythonRunner
 
 # QWidget = Base class for all UI widgets. Your console is a composite widget (contains multiple child widgets)
 # QVBoxLayout / QHBoxLayout = Layout managers that stack widgets vertically/horizontally.

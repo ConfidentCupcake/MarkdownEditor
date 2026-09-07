@@ -833,12 +833,28 @@ def _py_style_chunk(text, start, end, prev_state, keywords, builtins, magic_meth
 
 
 class NeutronLexer(QsciLexerCustom):
-    def __init__(self, language_name, editor, theme=None):
+    def __init__(self, language_name, editor, theme=None, paper=None):
+        """
+        Base lexer for both custom lexers.
+
+        Font/styling model (single source of truth: the THEME):
+          - family + size come from the theme's GLOBAL editor.font block
+            (one place — the Settings dialog edits exactly that block)
+          - per-style font blocks contribute ONLY font-weight and italic
+          - per-style paper-color is optional; styles without one inherit
+            the editor paper (which is also what the Settings color picker
+            overrides at runtime)
+
+        :param theme: absolute path to a theme .json; None -> themes/theme.json
+        :param paper: QColor paper override from the Settings dialog
+                     (None = use the theme's editor.paper-color)
+        """
         super(NeutronLexer, self).__init__(editor)
         self.editor = editor
         self.language_name = language_name
         self.theme_json = None
-        self.theme = theme or _resource_path(os.path.join("themes", "theme.json"))
+        self.theme = theme or _resource_path(os.path.join("../themes", "theme.json"))
+        self.paper_override = paper          # QColor or None
 
         self.token_list = []
         self.keyword_list = []
@@ -909,32 +925,91 @@ class NeutronLexer(QsciLexerCustom):
         self._prev_state = 0
 
     def _init_theme(self):
+        """
+        Build the whole style table from the theme file.
+
+        Lookup order per style:
+          color        <- style block (required)
+          paper-color  <- style block, else editor.paper-color,
+                         else the `paper` override from Settings (wins over
+                         everything when set)
+          font         <- GLOBAL family+size (editor.font) combined with the
+                         style's font-weight / italic only. Per-style family
+                         and font-size are deliberately IGNORED so one font
+                         choice in Settings really changes every style —
+                         that inconsistency is exactly why PythonEditor
+                         ignored the settings dialog before.
+        """
         with open(self.theme, "r", encoding="utf-8") as f:
             self.theme_json = json.load(f)
 
-        colors = self.theme_json["theme"]["syntax"]
+        data = self.theme_json["theme"]
+
+        # --- editor-wide defaults (the section the Settings dialog edits) -- #
+        editor_section = data.get("editor", {})
+        gfont = editor_section.get("font", {})
+        self.editor_font_family = gfont.get("family", "JetBrains Mono")
+        self.editor_font_size = int(gfont.get("font-size", 13))
+
+        theme_paper = editor_section.get("paper-color", "#1e1f22")
+        default_paper = (self.paper_override.name()
+                         if self.paper_override else theme_paper)
+
+        # The default style carries the editor-wide look; unstyled bytes
+        # and the margins inherit from it.
+        self.setDefaultColor(QColor(
+            data["syntax"][0]["default"].get("color", "#bcbec4")
+            if "default" in data["syntax"][0] else "#bcbec4"))
+        self.setDefaultPaper(QColor(default_paper))
+
+        colors = data["syntax"]
         for clr in colors:
             name = list(clr.keys())[0]
             if name not in self.default_names:
-                print(f"Theme error: {name} is not a valid style name!")
+                # Styles of the OTHER language live in the same theme file
+                # (one merged 62-style list) — skip silently, they are not
+                # errors, just not ours.
                 continue
-            for k, v in clr[name].items():
-                if k == "color":
-                    self.setColor(QColor(v), getattr(self, name.upper()))
-                elif k == "paper-color":
-                    self.setPaper(QColor(v), getattr(self, name.upper()))
-                elif k == "font":
-                    weight = self.font_weights.get(v.get("font-weight", "normal"), QFont.Normal)
-                    fnt = QFont(
-                        v.get("family", "sans-serif"),
-                        v.get("font-size", 13),
-                        weight,
-                    )
-                    fnt.setItalic(bool(v.get("italic", False)))
-                    self.setFont(fnt, getattr(self, name.upper()))
+            body = clr[name]
+
+            if "color" in body:
+                self.setColor(QColor(body["color"]), getattr(self, name.upper()))
+
+            paper_hex = body.get("paper-color", default_paper)
+            self.setPaper(QColor(paper_hex), getattr(self, name.upper()))
+
+            f = body.get("font", {})
+            weight = self.font_weights.get(f.get("font-weight", "normal"),
+                                           QFont.Normal)
+            fnt = QFont(self.editor_font_family, self.editor_font_size, weight)
+            fnt.setItalic(bool(f.get("italic", False)))
+            self.setFont(fnt, getattr(self, name.upper()))
 
     def language(self):
         return self.language_name
+
+    def editor_font(self) -> QFont:
+        """
+        The editor-wide font (family + size) from the theme's global
+        editor.font block, with per-style weight/italic stripped — this is
+        the font for margins, popups and anything editor-wide.
+
+        Replaces the old editors' self.window_font. Falls back to
+        JetBrains Mono 13 when the theme has no editor section.
+        """
+        f = QFont(self.editor_font_family, self.editor_font_size)
+        return f
+
+    def editor_color(self, key: str, fallback: str) -> QColor:
+        """
+        A color from the theme's editor section (caret, margins, ...).
+
+        :param key: editor-section key, e.g. "caret-color"
+        :param fallback: hex used when the theme lacks the key (older
+                        theme files without an editor section still work)
+        """
+        section = self.theme_json.get("theme", {}).get("editor", {})
+        return QColor(section.get(key, fallback))
 
     def description(self, style):
         names = {
@@ -1011,10 +1086,15 @@ class NeutronLexer(QsciLexerCustom):
 
 
 class PyCustomLexer(NeutronLexer):
-    def __init__(self, editor, theme=None):
-        # `theme` accepts an absolute path to a theme .json chosen in the
-        # Settings dialog; None keeps the built-in default (themes/theme.json).
-        super(PyCustomLexer, self).__init__("Python", editor, theme=theme)
+    def __init__(self, editor, theme=None, paper=None):
+        """
+        :param theme: absolute path to a theme .json chosen in the
+                      Settings dialog; None -> built-in default (themes/theme.json)
+        :param paper: QColor paper override from the Settings color picker;
+                      None -> the theme's editor.paper-color
+        """
+        super(PyCustomLexer, self).__init__("Python", editor, theme=theme,
+                                            paper=paper)
         self.setKeywords(keyword.kwlist)
         self.setBuiltinNames([
             name for name, obj in vars(builtins).items()
@@ -1022,7 +1102,12 @@ class PyCustomLexer(NeutronLexer):
         ] + list(_STDLIB_MODULES))
         self._keyword_set = set(keyword.kwlist)
         self._builtin_set = set(self.builtin_names)
-        self.setDefaultPaper(QColor("#1e1f22"))
+        # Paper comes from the theme's editor section (or the Settings
+        # paper override via super().__init__) — no longer hardcoded here.
+        self.setDefaultPaper(QColor(
+            self.theme_json["theme"].get("editor", {}).get(
+                "paper-color", "#1e1f22"))
+            if self.paper_override is None else self.paper_override)
         self._magic_set = {
             "__init__", "__str__", "__repr__", "__len__", "__iter__",
             "__next__", "__enter__", "__exit__", "__call__", "__getattr__",

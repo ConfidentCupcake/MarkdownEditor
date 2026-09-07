@@ -168,7 +168,8 @@ class DefinitionFinder(QThread):
 In `pythoneditor.py`:
 
 ```python
-from definition_finder import DefinitionFinder
+from code_inteligence.definition_finder import DefinitionFinder
+
 
 class PythonEditor(QsciScintilla):
     # Signal: emitted when the user wants to go to a definition in another file
@@ -425,9 +426,10 @@ class HoverHelper(QThread):
 ### Step 2: Add hover support to PythonEditor
 
 ```python
-from hover_helper import HoverHelper
+from code_inteligence.hover_helper import HoverHelper
 from PyQt5.QtGui import QToolTip, QMouseEvent
 from PyQt5.QtCore import QTimer
+
 
 class PythonEditor(QsciScintilla):
     def __init__(self, parent=None, path: Path = None, is_python_file: bool = True):
@@ -674,9 +676,10 @@ class SignatureHelper(QThread):
 ### Step 2: Add to PythonEditor
 
 ```python
-from signature_helper import SignatureHelper
+from code_inteligence.signature_helper import SignatureHelper
 from PyQt5.QtWidgets import QLabel
 from PyQt5.QtGui import QToolTip
+
 
 class PythonEditor(QsciScintilla):
     def __init__(self, parent=None, path: Path = None, is_python_file: bool = True):
@@ -947,7 +950,8 @@ class ReferencesTree(QTreeWidget):
 In `pythoneditor.py`:
 
 ```python
-from references_finder import ReferencesFinder
+from code_inteligence.references_finder import ReferencesFinder
+
 
 class PythonEditor(QsciScintilla):
     # Signal: emit when references are found (MainWindow shows the panel)
@@ -989,18 +993,18 @@ In `main.py`, add the references panel and connect:
 
 ```python
     def set_up_body(self):
-        # ... existing setup ...
+    # ... existing setup ...
 
-        # References panel (docked, hidden by default)
-        from references_finder import ReferencesTree
-        self.references_tree = ReferencesTree()
-        self.references_tree.reference_clicked.connect(self._open_file_at_position)
+    # References panel (docked, hidden by default)
+    from code_inteligence.references_finder import ReferencesTree
+    self.references_tree = ReferencesTree()
+    self.references_tree.reference_clicked.connect(self._open_file_at_position)
 
-        self.references_dock = QDockWidget("References", self)
-        self.references_dock.setWidget(self.references_tree)
-        self.references_dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.references_dock)
-        self.references_dock.hide()
+    self.references_dock = QDockWidget("References", self)
+    self.references_dock.setWidget(self.references_tree)
+    self.references_dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
+    self.addDockWidget(Qt.BottomDockWidgetArea, self.references_dock)
+    self.references_dock.hide()
 ```
 
 In `set_new_tab` (and `new_file`), connect the signal:

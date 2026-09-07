@@ -253,45 +253,47 @@ Note: `ruff_save_mode` is already read in `__init__` (`self.ruff_save_mode = sel
 
 ```python
     def _apply_settings(self, settings: dict):
-        from PyQt5.Qsci import QsciScintilla
-        from markdowneditor import MarkdownEditor
-        from pythoneditor import PythonEditor
-        from markdowncustomlexer import MarkdownCustomLexer
-        from custompythonlexer import PyCustomLexer
 
-        font = QFont(settings["font_family"])
-        font.setPointSize(settings["font_size"])
-        wrap = (QsciScintilla.WrapWord if settings["word_wrap"]
-                else QsciScintilla.WrapNone)
 
-        for editor in self.tab_view.all_editors():
-            editor.window_font = QFont(font)  # both editor classes use this attr
-            editor.setFont(font)
-            editor.setMarginsFont(font)
-            editor.setTabWidth(settings["tab_width"])
-            editor.setWrapMode(wrap)
-            editor.setCaretLineVisible(settings["highlight_line"])
+    from PyQt5.Qsci import QsciScintilla
+from markdown_editor.markdowneditor import MarkdownEditor
+from python_editor.pythoneditor import PythonEditor
+from markdown_editor.markdowncustomlexer import MarkdownCustomLexer
+from python_editor.custompythonlexer import PyCustomLexer
 
-            if settings["line_numbers"]:
-                editor.setMarginWidth(0, "0000")
-            else:
-                editor.setMarginWidth(0, 0)
+font = QFont(settings["font_family"])
+font.setPointSize(settings["font_size"])
+wrap = (QsciScintilla.WrapWord if settings["word_wrap"]
+        else QsciScintilla.WrapNone)
 
-            # Recreate the lexer so a theme switch takes effect immediately.
-            # Both lexers read themes/theme.json in __init__.
-            if isinstance(editor, MarkdownEditor):
-                editor.md_lexer = MarkdownCustomLexer(editor)
-                editor.md_lexer.setFont(font)
-                editor.setLexer(editor.md_lexer)
-            elif isinstance(editor, PythonEditor):
-                editor.py_lexer = PyCustomLexer(editor)
-                editor.py_lexer.setDefaultFont(font)
-                editor.setLexer(editor.py_lexer)
+for editor in self.tab_view.all_editors():
+    editor.window_font = QFont(font)  # both editor classes use this attr
+    editor.setFont(font)
+    editor.setMarginsFont(font)
+    editor.setTabWidth(settings["tab_width"])
+    editor.setWrapMode(wrap)
+    editor.setCaretLineVisible(settings["highlight_line"])
 
-        if settings["interpreter"]:
-            self.python_runner.set_interpreter(settings["interpreter"])
-            self.statusBar().showMessage(
-                f"Interpreter: {self.python_runner.interpreter}", 3000)
+    if settings["line_numbers"]:
+        editor.setMarginWidth(0, "0000")
+    else:
+        editor.setMarginWidth(0, 0)
+
+    # Recreate the lexer so a theme switch takes effect immediately.
+    # Both lexers read themes/theme.json in __init__.
+    if isinstance(editor, MarkdownEditor):
+        editor.md_lexer = MarkdownCustomLexer(editor)
+        editor.md_lexer.setFont(font)
+        editor.setLexer(editor.md_lexer)
+    elif isinstance(editor, PythonEditor):
+        editor.py_lexer = PyCustomLexer(editor)
+        editor.py_lexer.setDefaultFont(font)
+        editor.setLexer(editor.py_lexer)
+
+if settings["interpreter"]:
+    self.python_runner.set_interpreter(settings["interpreter"])
+    self.statusBar().showMessage(
+        f"Interpreter: {self.python_runner.interpreter}", 3000)
 ```
 
 ### Step 4: Menu action (in `set_up_menu`)

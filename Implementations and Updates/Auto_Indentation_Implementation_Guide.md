@@ -483,7 +483,7 @@ The function receives text **before the cursor**, not necessarily the whole line
 Open `pythoneditor.py`. Below existing project imports, add:
 
 ```python
-from indentation_helper import (
+from code_inteligence.indentation_helper import (
     should_indent_after_colon,
     compute_new_line_indent,
 )
@@ -492,10 +492,10 @@ from indentation_helper import (
 Example import region:
 
 ```python
-from custompythonlexer import PyCustomLexer
-from autocompleter import AutoCompleter
-from definition_finder import DefinitionFinder
-from indentation_helper import (
+from python_editor.custompythonlexer import PyCustomLexer
+from code_inteligence.autocompleter import AutoCompleter
+from code_inteligence.definition_finder import DefinitionFinder
+from code_inteligence.indentation_helper import (
     should_indent_after_colon,
     compute_new_line_indent,
 )

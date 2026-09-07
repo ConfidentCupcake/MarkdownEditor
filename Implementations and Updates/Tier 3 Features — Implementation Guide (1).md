@@ -167,7 +167,8 @@ class DefinitionFinder(QThread):
 In `pythoneditor.py`, modify `__init__` to create a `DefinitionFinder`:
 
 ```python
-from definition_finder import DefinitionFinder
+from code_inteligence.definition_finder import DefinitionFinder
+
 
 class PythonEditor(QsciScintilla):
     def __init__(self, parent=None, path: Path = None, is_python_file: bool = True):

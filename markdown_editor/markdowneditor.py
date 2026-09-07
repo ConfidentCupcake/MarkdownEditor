@@ -21,11 +21,10 @@ class MarkdownEditor(QsciScintilla):
         self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))
         # encoding
         self.setUtf8(True)
-        # font
-        self.window_font = QFont()
-        self.window_font.setStyleHint(QFont.SansSerif)
-        self.window_font.setPointSize(13)
-        self.setFont(self.window_font)
+        # NOTE: no editor-level font anymore — the theme (via the lexer)
+        # owns family, size, colors and paper. _apply_theme_editor_style()
+        # below pulls the editor-wide look from the lexer after it loads
+        # the theme. JetBrains Mono 13 is only the pre-lexer fallback.
 
         # brace matching
         self.setBraceMatching(QsciScintilla.SloppyBraceMatch)
@@ -45,15 +44,17 @@ class MarkdownEditor(QsciScintilla):
         self.setAutoCompletionCaseSensitivity(False)
         self.setAutoCompletionUseSingle(QsciScintilla.AcusNever)
 
-        # caret
+        # caret (fallbacks; the theme's editor section replaces them via
+        # _apply_theme_editor_style once the lexer is attached)
         self.setCaretForegroundColor(QColor('#f31122'))  # sets text caret color
         self.setCaretLineVisible(True)  # enables the background color of the caret line
         self.setCaretWidth(2)  # sets the caret with
         self.setCaretLineBackgroundColor(QColor('#3d424d')) # changes the background color of the caret line
 
-        # set lexer
+        # set lexer — it loads themes/theme.json itself and derives every
+        # font/color/paper from it (single source of truth)
         self.md_lexer = MarkdownCustomLexer(self)
-        self.md_lexer.setFont(self.window_font)
+        self._apply_theme_editor_style()
 
         self.api = QsciAPIs(self.md_lexer)
         for key in keyword.kwlist + dir(__builtins__):
@@ -67,11 +68,34 @@ class MarkdownEditor(QsciScintilla):
 
         self.setMarginType(0, QsciScintilla.NumberMargin)
         self.setMarginWidth(0, "000")
-        self.setMarginsForegroundColor(QColor('#ff888888'))
-        self.setMarginsBackgroundColor(QColor('#1e1f22'))
-        self.setMarginsFont(self.window_font)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setWrapMode(QsciScintilla.WrapNone)
+
+    def _apply_theme_editor_style(self):
+        """
+        Push the theme's editor-section styling onto this widget.
+
+        Mirrors PythonEditor._apply_theme_editor_style — called at the end
+        of __init__ and again by main.py's _apply_editor_settings() after
+        a lexer swap (fresh lexers reset the style table, which would
+        otherwise wipe the margin colors / gutter-turns-white bug).
+
+        Everything is read THROUGH the lexer so the theme file stays the
+        single source of truth for editor-wide styling.
+        """
+        lexer = self.md_lexer
+        f = lexer.editor_font()
+        self.setFont(f)
+        self.setMarginsFont(f)
+        self.setPaper(lexer.defaultPaper())
+        self.setCaretForegroundColor(
+            lexer.editor_color("caret-color", "#f31122"))
+        self.setCaretLineBackgroundColor(
+            lexer.editor_color("caret-line-background", "#3d424d"))
+        self.setMarginsForegroundColor(
+            lexer.editor_color("margin-foreground", "#ff888888"))
+        self.setMarginsBackgroundColor(
+            lexer.editor_color("margin-background", "#1e1f22"))
 
     # No need to assign any function to handle key press, this overloads the function from base class
     def keyPressEvent(self, e: QKeyEvent) -> None:

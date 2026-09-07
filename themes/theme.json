@@ -6,10 +6,7 @@
       {
         "default": {
           "color": "#bcbec4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -18,10 +15,7 @@
       {
         "keyword": {
           "color": "#ff5700",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -30,10 +24,7 @@
       {
         "types": {
           "color": "#bcbec4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -42,10 +33,7 @@
       {
         "string": {
           "color": "#00ff21",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -54,10 +42,7 @@
       {
         "keyargs": {
           "color": "#ea5a5a",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -66,10 +51,7 @@
       {
         "brackets": {
           "color": "#bcbec4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -78,10 +60,7 @@
       {
         "comments": {
           "color": "#7a7e85",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -90,10 +69,7 @@
       {
         "constants": {
           "color": "#ff5700",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -102,10 +78,7 @@
       {
         "functions": {
           "color": "#8621ff",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -114,10 +87,7 @@
       {
         "classes": {
           "color": "#ea5a5a",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -126,10 +96,7 @@
       {
         "function_def": {
           "color": "#0082ff",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -138,10 +105,7 @@
       {
         "decorator": {
           "color": "#bbb529",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -150,10 +114,7 @@
       {
         "operators": {
           "color": "#ffffff",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -162,10 +123,7 @@
       {
         "magic_methods": {
           "color": "#c857cd",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -174,10 +132,7 @@
       {
         "numbers": {
           "color": "#11e4f6",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -186,10 +141,7 @@
       {
         "self_cls": {
           "color": "#94558d",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -198,10 +150,7 @@
       {
         "builtins": {
           "color": "#bcbec4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -210,10 +159,7 @@
       {
         "parameters": {
           "color": "#ea5a5a",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -222,10 +168,7 @@
       {
         "class_reference": {
           "color": "#bcbec4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -234,10 +177,7 @@
       {
         "instance_field": {
           "color": "#bcbec4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -246,10 +186,7 @@
       {
         "instance_method": {
           "color": "#8621ff",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -258,10 +195,7 @@
       {
         "static_field": {
           "color": "#bcbec4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -270,10 +204,7 @@
       {
         "static_method": {
           "color": "#8621ff",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -282,10 +213,7 @@
       {
         "function_call": {
           "color": "#8621ff",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -294,10 +222,7 @@
       {
         "local_variable": {
           "color": "#46b2ff",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -306,10 +231,7 @@
       {
         "comma": {
           "color": "#bcbec4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -318,10 +240,7 @@
       {
         "module_name": {
           "color": "#bcbec4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -330,10 +249,7 @@
       {
         "docstring": {
           "color": "#5f826b",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "JetBrains Mono",
-            "font-size": 13,
             "font-weight": "normal",
             "italic": false
           }
@@ -342,10 +258,7 @@
       {
         "header": {
           "color": "#e50f21",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -354,10 +267,7 @@
       {
         "setext_header": {
           "color": "#e50f21",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -366,10 +276,7 @@
       {
         "hrule": {
           "color": "#3e69ba",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -378,10 +285,7 @@
       {
         "blockquote": {
           "color": "#d60ef9",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": true
           }
@@ -390,10 +294,7 @@
       {
         "list_marker": {
           "color": "#3e69ba",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -402,10 +303,7 @@
       {
         "ordered_list_marker": {
           "color": "#3e69ba",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -414,10 +312,7 @@
       {
         "task_marker": {
           "color": "#3e69ba",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -426,10 +321,7 @@
       {
         "bold": {
           "color": "#f9d60e",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -438,10 +330,7 @@
       {
         "italic": {
           "color": "#c678dd",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": true
           }
@@ -450,10 +339,7 @@
       {
         "bold_italic": {
           "color": "#f9d60e",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": true
           }
@@ -462,10 +348,7 @@
       {
         "strikethrough": {
           "color": "#f9d50a",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -474,10 +357,7 @@
       {
         "inline_code": {
           "color": "#0ef9d6",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "Consolas",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -486,10 +366,7 @@
       {
         "code_fence": {
           "color": "#1eae0a",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "Consolas",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -498,10 +375,7 @@
       {
         "code_block": {
           "color": "#c69b8d",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "Consolas",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -510,10 +384,7 @@
       {
         "code_language": {
           "color": "#1eae0a",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "Consolas",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -522,10 +393,7 @@
       {
         "link_text": {
           "color": "#087ad7",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -534,10 +402,7 @@
       {
         "link_url": {
           "color": "#087ad7",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": true
           }
@@ -546,10 +411,7 @@
       {
         "link_title": {
           "color": "#c678aa",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": true
           }
@@ -558,10 +420,7 @@
       {
         "reference_id": {
           "color": "#087ad7",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -570,10 +429,7 @@
       {
         "link_definition": {
           "color": "#087ad7",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -582,10 +438,7 @@
       {
         "autolink": {
           "color": "#087ad7",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -594,10 +447,7 @@
       {
         "image_marker": {
           "color": "#087ad7",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -606,10 +456,7 @@
       {
         "table_pipe": {
           "color": "#3e69ba",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "Consolas",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -618,10 +465,7 @@
       {
         "table_separator": {
           "color": "#3e69ba",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "Consolas",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -630,10 +474,7 @@
       {
         "table_text": {
           "color": "#dcdfe4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -642,10 +483,7 @@
       {
         "html": {
           "color": "#c69b8d",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "Consolas",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -654,10 +492,7 @@
       {
         "escape": {
           "color": "#0ef9d6",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "Consolas",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -666,10 +501,7 @@
       {
         "entity": {
           "color": "#c678aa",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -678,10 +510,7 @@
       {
         "footnote_marker": {
           "color": "#087ad7",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -690,10 +519,7 @@
       {
         "footnote_text": {
           "color": "#dcdfe4",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
@@ -702,10 +528,7 @@
       {
         "alert": {
           "color": "#d60ef9",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -714,10 +537,7 @@
       {
         "mention": {
           "color": "#087ad7",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -726,10 +546,7 @@
       {
         "issue_ref": {
           "color": "#e50f21",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "bold",
             "italic": false
           }
@@ -738,15 +555,23 @@
       {
         "emoji": {
           "color": "#f9d60e",
-          "paper-color": "#1e1f22",
           "font": {
-            "family": "sans-serif",
-            "font-size": 14,
             "font-weight": "normal",
             "italic": false
           }
         }
       }
-    ]
+    ],
+    "editor": {
+      "font": {
+        "family": "JetBrains Mono",
+        "font-size": 13
+      },
+      "paper-color": "#1e1f22",
+      "caret-color": "#f31122",
+      "caret-line-background": "#3d424d",
+      "margin-foreground": "#ff888888",
+      "margin-background": "#1e1f22"
+    }
   }
 }

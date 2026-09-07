@@ -251,3 +251,115 @@ Traceback (most recent call last):
     self.documentation_popup.set_documentation_font(self.window_font)
                                                     ^^^^^^^^^^^^^^^^
 AttributeError: 'PythonEditor' object has no attribute 'window_font'
+
+[2026-09-03 08:33:19]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1263, in set_new_tab
+    editor = self.get_editor(path=path)
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 314, in get_editor
+    editor = PythonEditor(
+        path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+    )
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 119, in __init__
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  [Previous line repeated 2991 more times]
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 162, in _apply_theme_editor_style
+    f = lexer.editor_font()
+RecursionError: maximum recursion depth exceeded
+
+[2026-09-03 08:33:32]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1263, in set_new_tab
+    editor = self.get_editor(path=path)
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 314, in get_editor
+    editor = PythonEditor(
+        path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+    )
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 119, in __init__
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  [Previous line repeated 2991 more times]
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 162, in _apply_theme_editor_style
+    f = lexer.editor_font()
+RecursionError: maximum recursion depth exceeded
+
+[2026-09-03 08:33:34]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1263, in set_new_tab
+    editor = self.get_editor(path=path)
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 314, in get_editor
+    editor = PythonEditor(
+        path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+    )
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 119, in __init__
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  [Previous line repeated 2991 more times]
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 162, in _apply_theme_editor_style
+    f = lexer.editor_font()
+RecursionError: maximum recursion depth exceeded
+
+[2026-09-03 08:34:43]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1263, in set_new_tab
+    editor = self.get_editor(path=path)
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 314, in get_editor
+    editor = PythonEditor(
+        path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+    )
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 119, in __init__
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 189, in _apply_theme_editor_style
+    self._apply_theme_editor_style()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  [Previous line repeated 2991 more times]
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 162, in _apply_theme_editor_style
+    f = lexer.editor_font()
+RecursionError: maximum recursion depth exceeded

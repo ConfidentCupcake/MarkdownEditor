@@ -1,20 +1,29 @@
 import re
 from PyQt5.QtGui import QColor, QFont
-from custompythonlexer import NeutronLexer
+from python_editor.custompythonlexer import NeutronLexer
 
 
 class MarkdownCustomLexer(NeutronLexer):
     """Custom visual lexer for Markdown, reusing the NeutronLexer base."""
 
-    def __init__(self, editor, theme=None):
-        super(MarkdownCustomLexer, self).__init__("Markdown", editor, theme=theme)
+    def __init__(self, editor, theme=None, paper=None):
+        """
+        :param theme: absolute path to a theme .json; None -> default
+        :param paper: QColor paper override from the Settings color picker;
+                      None -> the theme's editor.paper-color
+        """
+        super(MarkdownCustomLexer, self).__init__("Markdown", editor,
+                                                  theme=theme, paper=paper)
 
-        # Stable fallback colors so unstyled regions never flash white.
-        self.setDefaultColor(QColor("#abb2bf"))
-        self.setDefaultPaper(QColor("#1e1f22"))
+        # Fallback colors ONLY for themes without an editor section —
+        # _init_theme's theme-driven styles win; these just guarantee
+        # unstyled regions never flash white when a legacy theme is loaded.
+        if not self.theme_json.get("theme", {}).get("editor"):
+            self.setDefaultColor(QColor("#abb2bf"))
+            self.setDefaultPaper(QColor("#1e1f22"))
 
-        self.editor.setColor(QColor("#abb2bf"))
-        self.editor.setPaper(QColor("#1e1f22"))
+        self.editor.setColor(self.defaultColor())
+        self.editor.setPaper(self.defaultPaper())
 
     # ------------------------------------------------------------------ #
     #  Style IDs + theme mapping
