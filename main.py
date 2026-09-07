@@ -574,6 +574,11 @@ class MainWindow(QMainWindow):
         settings_action.setShortcut("Ctrl+Alt+S")
         settings_action.setShortcutContext(Qt.ApplicationShortcut)
         settings_action.triggered.connect(self.open_settings)
+        
+        hacker_action = view_menu.addAction("Hacker-Mode")
+        hacker_action.setShortcut("Ctrl+Shift+H")
+        hacker_action.setShortcutContext(Qt.ApplicationShortcut)
+        hacker_action.triggered.connect(lambda: self.set_hacker_mode(not getattr(self, "_hacker", False)))
 
         help_menu = menu_bar.addMenu("Help")
 
@@ -1089,7 +1094,32 @@ class MainWindow(QMainWindow):
             self.python_runner.set_interpreter(settings["interpreter"])
             self.statusBar().showMessage(
                 f"Interpreter: {self.python_runner.interpreter}", 3000)
-
+    
+    def set_hacker_mode(self, on: bool):
+        """
+        C17: the full bundle - CRT theme + sanlines in one switch.
+        
+        Reuses the settings machinery delliberately: theme switching, lexer recreation,
+        thr margin color, fix and per-editor application were already built and debugged.
+        Never write a second theme pipeline when one exists.
+        
+        :param on: True = hacker.json + scanlines; False = default theme 
+        """
+        from cozy.overlays import ScanlineOverlay
+        
+        if on and not hasattr(self, "scanlines"):
+            self. scanlines = ScanlineOverlay(self)
+        if hasattr(self, "scnalines"):
+            self.scanlines.setVisible(on)
+            
+        settings = self._load_settings()
+        settings["theme"] = "hacker.json" if on else "theme.json"
+        self._save_settings(settings)
+        self._apply_settings(settings)
+        
+        self.statusBar().showMessage("HACK THE PLANET" if on else "Back to reality", 2500)
+        
+        
     def _active_theme_path(self):
         """Absolute path of the theme file the settings currently name."""
         return self._theme_path(
@@ -1225,12 +1255,23 @@ class MainWindow(QMainWindow):
                                             paper=paper)
             editor.setLexer(editor.py_lexer)
             editor._apply_theme_editor_style()
+
             # QsciAPIs is bound to the lexer instance it was created with,
             # so reattach a fresh one to the new lexer. The AutoCompleter
             # thread repopulates the word list as soon as the user types.
             from PyQt5.Qsci import QsciAPIs
             if getattr(editor, "_api", None) is not None:
                 editor._api = QsciAPIs(editor.py_lexer)
+
+        # BUGFIX (phantom strings after theme switches): setLexer() does NOT
+        # reliably restyle the whole document - old style bytes from the
+        # PREVIOUS lexer/theme survive in the buffer, so text typed after
+        # switching themes inherits stale styles (everything after the caret
+        # rendered as neon-green "strings" until a docstring quote "closed"
+        # the phantom string). SCI_COLOURISE (4003) with (0, -1) forces the
+        # NEW lexer to restyle the entire document right now.
+        editor.SendScintilla(4003, 0, -1)
+
     def is_binary(self, path):
         """
         check if a file is binary
@@ -1312,7 +1353,7 @@ class MainWindow(QMainWindow):
             }
         """)
         return frame
-
+    
     def set_up_body(self):
         # Body
         body_frame = QFrame()

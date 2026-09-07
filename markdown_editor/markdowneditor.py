@@ -6,7 +6,7 @@ import keyword
 import pkgutil
 import os
 from pathlib import Path
-from markdowncustomlexer import MarkdownCustomLexer
+from markdown_editor.markdowncustomlexer import MarkdownCustomLexer
  
 
 class MarkdownEditor(QsciScintilla):

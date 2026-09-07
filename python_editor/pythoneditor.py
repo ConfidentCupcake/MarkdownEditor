@@ -7,7 +7,7 @@ from PyQt5.QtGui import QColor, QKeyEvent, QMouseEvent
 from PyQt5.QtWidgets import QToolTip
 
 from code_inteligence.autocompleter import AutoCompleter
-from custompythonlexer import PyCustomLexer
+from python_editor.custompythonlexer import PyCustomLexer
 from code_inteligence.definition_finder import DefinitionFinder
 from code_inteligence.documentation_popup import DocumentationPopup
 from code_inteligence.hover_helper import HoverHelper

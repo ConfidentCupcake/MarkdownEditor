@@ -7,8 +7,8 @@ from pathlib import Path
 from PyQt5.QtCore import QObject, QTimer
 from PyQt5.QtWidgets import QToolTip
 
-from ruff_diagnostics_model import RuffDiagnostic, RuffPosition, RuffSeverity
-from ruff_diagnostics_view import RuffDiagnosticView
+from ruff_implementation.ruff_diagnostics_model import RuffDiagnostic, RuffPosition, RuffSeverity
+from ruff_implementation.ruff_diagnostics_view import RuffDiagnosticView
 
 class RuffLspController(QObject):
     """Keep one QScintilla Python document synchronized with Ruff LSP."""

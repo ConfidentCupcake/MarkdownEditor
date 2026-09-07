@@ -3,7 +3,7 @@
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QToolTip
 from PyQt5.Qsci import QsciScintilla
-from ruff_diagnostics_model import RuffDiagnostic, RuffSeverity
+from ruff_implementation.ruff_diagnostics_model import RuffDiagnostic, RuffSeverity
 
 class RuffDiagnosticView:
     """

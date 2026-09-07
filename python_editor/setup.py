@@ -12,7 +12,7 @@ from Cython.Build import cythonize
 
 setup(
     ext_modules=cythonize(
-        "lexer_fast.pyx",
+        "python_editor\lexer_fast.pyx",
         compiler_directives={
             # boundscheck=False: disable IndexError checking oin array access
             # We manually check bounds, so thi is safe. Gives ~20% speedup.

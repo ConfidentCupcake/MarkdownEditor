@@ -363,3 +363,23 @@ Traceback (most recent call last):
   File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\pythoneditor.py", line 162, in _apply_theme_editor_style
     f = lexer.editor_font()
 RecursionError: maximum recursion depth exceeded
+
+[2026-09-07 15:50:23]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 581, in <lambda>
+    hacker_action.triggered.connect(lambda: self.set_hacker_mode(not getattr(self, "_hacker", False)))
+                                            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1116, in set_hacker_mode
+    settings["theme"] = "hacker.json" if onn else "theme.json"
+                                         ^^^
+NameError: name 'onn' is not defined
+
+[2026-09-07 15:51:09]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 581, in <lambda>
+    hacker_action.triggered.connect(lambda: self.set_hacker_mode(not getattr(self, "_hacker", False)))
+                                            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1116, in set_hacker_mode
+    settings["theme"] = "hacker.json" if on else "theme.json"
+                                         ^^^
+NameError: name 'onn' is not defined
