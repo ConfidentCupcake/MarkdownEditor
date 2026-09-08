@@ -383,3 +383,321 @@ Traceback (most recent call last):
     settings["theme"] = "hacker.json" if on else "theme.json"
                                          ^^^
 NameError: name 'onn' is not defined
+
+[2026-09-08 11:37:38]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 275, in dropEvent
+    shutil.copytree(path, root_path / path.name)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\DaSchuhbauer\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py", line 654, in copytree
+    return _copytree(entries=entries, src=src, dst=dst, symlinks=symlinks,
+                     ignore=ignore, copy_function=copy_function,
+                     ignore_dangling_symlinks=ignore_dangling_symlinks,
+                     dirs_exist_ok=dirs_exist_ok)
+  File "C:\Users\DaSchuhbauer\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py", line 552, in _copytree
+    os.makedirs(dst, exist_ok=dirs_exist_ok)
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen os>", line 236, in makedirs
+FileExistsError: [WinError 183] Eine Datei kann nicht erstellt werden, wenn sie bereits vorhanden ist: 'C:\\Users\\DaSchuhbauer\\PycharmProjects\\Markdown-Editor-main\\New Folder'
+
+[2026-09-08 11:37:41]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 275, in dropEvent
+    shutil.copytree(path, root_path / path.name)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\DaSchuhbauer\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py", line 654, in copytree
+    return _copytree(entries=entries, src=src, dst=dst, symlinks=symlinks,
+                     ignore=ignore, copy_function=copy_function,
+                     ignore_dangling_symlinks=ignore_dangling_symlinks,
+                     dirs_exist_ok=dirs_exist_ok)
+  File "C:\Users\DaSchuhbauer\AppData\Local\Python\pythoncore-3.14-64\Lib\shutil.py", line 552, in _copytree
+    os.makedirs(dst, exist_ok=dirs_exist_ok)
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen os>", line 236, in makedirs
+FileExistsError: [WinError 183] Eine Datei kann nicht erstellt werden, wenn sie bereits vorhanden ist: 'C:\\Users\\DaSchuhbauer\\PycharmProjects\\Markdown-Editor-main\\New Folder'
+
+[2026-09-08 14:02:27]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:29]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:30]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:38]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:38]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:39]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:40]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:43]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:43]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:44]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:48]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:48]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:50]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:51]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:56]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:57]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:57]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:02:57]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:03:00]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:03:01]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:03:01]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'
+
+[2026-09-08 14:03:02]
+Traceback (most recent call last):
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\side_bar_widgets\file_manager.py", line 73, in tree_view_clicked
+    self.set_new_tab(p)
+    ~~~~~~~~~~~~~~~~^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 1355, in set_new_tab
+    self._connect_editor(editor)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "C:\Users\DaSchuhbauer\PycharmProjects\Markdown-Editor-main\main.py", line 365, in _connect_editor
+    editor.textChanged.connect(self._on_typing_xp)
+                               ^^^^^^^^^^^^^^^^^^
+AttributeError: 'MainWindow' object has no attribute '_on_typing_xp'

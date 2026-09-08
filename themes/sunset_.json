@@ -1,0 +1,577 @@
+{
+  "theme": {
+    "name": "sunset",
+    "version": "1.0",
+    "syntax": [
+      {
+        "default": {
+          "color": "#e8c8b0",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "keyword": {
+          "color": "#ff5700",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "types": {
+          "color": "#bcbec4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "string": {
+          "color": "#ffb347",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "keyargs": {
+          "color": "#ea5a5a",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "brackets": {
+          "color": "#bcbec4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "comments": {
+          "color": "#7a6e6a",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "constants": {
+          "color": "#ff5700",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "functions": {
+          "color": "#8621ff",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "classes": {
+          "color": "#ea5a5a",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "function_def": {
+          "color": "#ff8c61",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "decorator": {
+          "color": "#bbb529",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "operators": {
+          "color": "#ffffff",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "magic_methods": {
+          "color": "#c857cd",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "numbers": {
+          "color": "#ffd27f",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "self_cls": {
+          "color": "#94558d",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "builtins": {
+          "color": "#bcbec4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "parameters": {
+          "color": "#ea5a5a",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "class_reference": {
+          "color": "#bcbec4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "instance_field": {
+          "color": "#bcbec4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "instance_method": {
+          "color": "#8621ff",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "static_field": {
+          "color": "#bcbec4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "static_method": {
+          "color": "#8621ff",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "function_call": {
+          "color": "#e07be0",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "local_variable": {
+          "color": "#f0a8a0",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "comma": {
+          "color": "#bcbec4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "module_name": {
+          "color": "#bcbec4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "docstring": {
+          "color": "#8f6b5a",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "header": {
+          "color": "#e50f21",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "setext_header": {
+          "color": "#e50f21",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "hrule": {
+          "color": "#3e69ba",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "blockquote": {
+          "color": "#d60ef9",
+          "font": {
+            "font-weight": "normal",
+            "italic": true
+          }
+        }
+      },
+      {
+        "list_marker": {
+          "color": "#3e69ba",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "ordered_list_marker": {
+          "color": "#3e69ba",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "task_marker": {
+          "color": "#3e69ba",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "bold": {
+          "color": "#f9d60e",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "italic": {
+          "color": "#c678dd",
+          "font": {
+            "font-weight": "normal",
+            "italic": true
+          }
+        }
+      },
+      {
+        "bold_italic": {
+          "color": "#f9d60e",
+          "font": {
+            "font-weight": "bold",
+            "italic": true
+          }
+        }
+      },
+      {
+        "strikethrough": {
+          "color": "#f9d50a",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "inline_code": {
+          "color": "#0ef9d6",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "code_fence": {
+          "color": "#1eae0a",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "code_block": {
+          "color": "#c69b8d",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "code_language": {
+          "color": "#1eae0a",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "link_text": {
+          "color": "#087ad7",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "link_url": {
+          "color": "#087ad7",
+          "font": {
+            "font-weight": "normal",
+            "italic": true
+          }
+        }
+      },
+      {
+        "link_title": {
+          "color": "#c678aa",
+          "font": {
+            "font-weight": "normal",
+            "italic": true
+          }
+        }
+      },
+      {
+        "reference_id": {
+          "color": "#087ad7",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "link_definition": {
+          "color": "#087ad7",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "autolink": {
+          "color": "#087ad7",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "image_marker": {
+          "color": "#087ad7",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "table_pipe": {
+          "color": "#3e69ba",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "table_separator": {
+          "color": "#3e69ba",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "table_text": {
+          "color": "#dcdfe4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "html": {
+          "color": "#c69b8d",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "escape": {
+          "color": "#0ef9d6",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "entity": {
+          "color": "#c678aa",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "footnote_marker": {
+          "color": "#087ad7",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "footnote_text": {
+          "color": "#dcdfe4",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      },
+      {
+        "alert": {
+          "color": "#d60ef9",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "mention": {
+          "color": "#087ad7",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "issue_ref": {
+          "color": "#e50f21",
+          "font": {
+            "font-weight": "bold",
+            "italic": false
+          }
+        }
+      },
+      {
+        "emoji": {
+          "color": "#f9d60e",
+          "font": {
+            "font-weight": "normal",
+            "italic": false
+          }
+        }
+      }
+    ],
+    "editor": {
+      "font": {
+        "family": "JetBrains Mono",
+        "font-size": 13
+      },
+      "paper-color": "#211722",
+      "caret-color": "#ff8c61",
+      "caret-line-background": "#3a2626",
+      "margin-foreground": "#ff888888",
+      "margin-background": "#211722"
+    }
+  }
+}

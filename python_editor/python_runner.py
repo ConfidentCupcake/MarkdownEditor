@@ -9,6 +9,8 @@ class PythonRunner(QObject):
     error_ready = pyqtSignal(str)
     process_finished = pyqtSignal(int)
     state_changed = pyqtSignal(str)
+    process_started = pyqtSignal()          # emitted right after QProcess.start()
+    process_finished = pyqtSignal(int)      # emitted witht the exit code
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,6 +32,7 @@ class PythonRunner(QObject):
         self.process.setProcessEnvironment(env)  # Apply the custom environment to the subprocess
         self.process.setWorkingDirectory(str(cwd or path.parent)) # Set the working environment. If the working environment is C:\projects\myapp\main.py -> the working directory is C:\projects\myapp.
         self.process.start(self.interpreter, ["-u", str(path)]) # Takes the programm and a list of arguments = "C:\Python311\python.exe" -u "C:\projects\myapp\main.py"
+        self.process_started.emit()
         
         
     def _build_env(self, project_root: Path) -> QProcessEnvironment:
@@ -57,6 +60,7 @@ class PythonRunner(QObject):
         self.process.setProcessEnvironment(env)
         self.process.setWorkingDirectory(work_dir)
         self.process.start(self.interpreter, ["-u", "-c", code])
+        self.process_started.emit()
         
     def send_input(self, text: str):
         """Send user input to the running process's stdin."""
@@ -121,6 +125,7 @@ class PythonRunner(QObject):
         # Docs: https://docs.python.org/3/library/shlex.html#shlex.split
         arg_list = ["-u", str(path)] + shlex.split(args)
         self.process.start(self.interpreter, arg_list)
+        self.process_started.emit()
     
     def run_pip(self, args: str):
         """

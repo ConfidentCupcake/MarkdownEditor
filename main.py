@@ -23,6 +23,7 @@ from python_editor.pythoneditor import PythonEditor
 from ruff_implementation.ruff_lsp_client import RuffLspClient
 from con_term.terminal_widget import TerminalWidget
 from side_bar_widgets.code_outline import CodeOutlineTree
+from cozy.cat_controller import CatController
 
 APP_VERSION = "v1.9.2"
 
@@ -200,6 +201,24 @@ class MainWindow(QMainWindow):
         self.cursor_pos_label.setStyleSheet("color: #888; padding: 0 10px;")
         self.statusBar().addPermanentWidget(self.cursor_pos_label)
 
+        # --- Cozy Mode: the status bar cat ---------------------------------------------------------- #
+        self.cat = CatController(self)
+        self.statusBar().addPermanentWidget(self.cat)
+
+        from cozy.neko import NekoChaser
+        self.neko = NekoChaser(self)
+        self.neko.start()
+
+        # C2: level-ups plat rhe Dance frames and announce themselves
+        self.cat.level_up.connect(lambda lvl, title: self.statusBar().showMessage(f"Cat leveled up: {title} (level {lvl})", 3000))
+
+        # C1: pet milestones (achievement logic lives in the handler, NOT in the lambda
+        # keep lambdas dump, they cannot be extended
+        self.cat.petted.connect(self._on_cat_petted)
+        
+        self.python_runner.process_started.connect(self._on_run_started)
+        self.python_runner.process_finished.connect(self._on_run_finished)
+
         # Word count label - shows "Words: X | Chars: Y"
         self.word_count_label = QLabel("Words: 0 | Chars: 0")
         self.word_count_label.setStyleSheet("color: #888; padding: 0 10px;")
@@ -232,6 +251,58 @@ class MainWindow(QMainWindow):
         chars = len(text)
 
         self.word_count_label.setText(f"Words: {words} | Chars: {chars}")
+
+    def _on_cat_petted(self, total_pets: int):
+        """
+        C1: react to pet milestones.
+
+        Fires on EVERY pet (the sigggnal carries the total), but the checks are
+        exact matches so each milestone fires exactlz one. A >= check would re-triggggger
+        on every pet past the treshold.
+
+        :param total_pets: new lifetime pet count.
+        """
+        if total_pets == 1000:
+            self.cat.set_party_hat(True)
+            self.statusBar().showMessage("Achievement unlocked: Certified Cat Person", 5000)
+    def _on_run_started(self):
+        """
+        C4: excited typing (Excited frames) while the process is alive.
+        60 s duration: the finished handler overrides by priority —
+        stretch/look_away/cry are priority 6, type_excited is 4.
+        """
+        self.cat.set_state("type_excited", 60_000)
+
+    def _on_run_finished(self, exit_code: int):
+        """
+        C4: stretch + XP on success; sad (look_away) or crying on failure.
+
+        :param exit_code: process exit code; 0 = success
+        """
+        if exit_code == 0:
+            self.cat.set_state("stretch", 2500)    # snack / proud stretch
+            self.cat.add_xp(10)                    # XP_RULES["run_success"]
+            # confetti burst once B1 is built (section 10.4)
+        else:
+            # Sad frames for a normal failure, Cry frames when the console
+            # shows a traceback (crash). If you don't distinguish yet, use
+            # look_away for both.
+            self.cat.set_state("look_away", 3000)
+            
+    def _on_typing_xp(self):
+        """
+        C2: 1 XP per 10 textChanged invocations.
+
+        Why count invocations instead of document length:
+            textChanged also fires on deletions, pastes and programmatic setText. A length-based
+            rule would grant XP for OPENING a big file; a fixed 10-invocation counter
+            is immune to document size and direction fo the edit.
+        """
+        from cozy.cat_controller import XP_RULES
+        self._xp_key_counter = getattr(self, "_xp_key_counter", 0) + 1
+        if self._xp_key_counter >= XP_RULES["keys_per_xp"]:
+            self._xp_key_counter = 0
+            self.cat.add_xp(1)
 
     def _on_editor_text_changed(self, editor):
         """Mark the specific editor that emitted textChanged as dirty."""
@@ -336,6 +407,7 @@ class MainWindow(QMainWindow):
         editor.textChanged.connect(self._debounce.start)
         editor.textChanged.connect(self._outline_debounce.start)
         editor.textChanged.connect(self.update_word_count)
+        editor.textChanged.connect(self._on_typing_xp)
         editor.cursorPositionChanged.connect(
             lambda line, column, ed=editor: self._on_editor_cursor_changed(ed, line, column)
         )
@@ -1874,6 +1946,8 @@ class MainWindow(QMainWindow):
         self.current_file = path
         self.mark_editor_clean(editor)
         self.statusBar().showMessage(f"Saved {path.name}", 3000)
+        self.cat.add_xp(1)
+        self.cat.set_state("stretch", 2500)
         return True
 
     def save_as(self):
