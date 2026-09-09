@@ -215,6 +215,17 @@ class MainWindow(QMainWindow):
         # C1: pet milestones (achievement logic lives in the handler, NOT in the lambda
         # keep lambdas dump, they cannot be extended
         self.cat.petted.connect(self._on_cat_petted)
+
+        from cozy.power_mode import PowerModeController
+        # Honor the saved Power Mode states from the View menu dropdown.
+        self.power = PowerModeController(
+            self,
+            enabled=self.power_mode_action.isChecked(),
+            shake_intensity=1,
+            particles_on=self.power_particles_action.isChecked(),
+            shake_on=self.power_shake_action.isChecked(),
+            glow_enabled=self.power_glow_action.isChecked(),
+        )
         
         self.python_runner.process_started.connect(self._on_run_started)
         self.python_runner.process_finished.connect(self._on_run_finished)
@@ -227,7 +238,48 @@ class MainWindow(QMainWindow):
         self.show()
 
         QTimer.singleShot(2000, self.check_for_updates)
-    
+
+        # --- idle choreography: sleepy -> box -> sleep ------------------ #
+        # Escalation ladder: 60 s idle = yawn; 3 min = deep sleep; 10 min =
+        # the cat moves into a box (and pops back out when you return).
+        # Timers re-arm on activity via _connect_editor's textChanged below.
+        self._cat_sleepy_timer = QTimer(self)
+        self._cat_sleepy_timer.setSingleShot(True)
+        self._cat_sleepy_timer.timeout.connect(
+            lambda: self.cat.set_state("sleepy", 120000)
+        )
+
+        self._cat_sleep_timer = QTimer(self)
+        self._cat_sleep_timer.setSingleShot(True)
+        self._cat_sleep_timer.timeout.connect(
+            lambda: self.cat.set_state("sleep", 300000)
+        )
+
+        self._cat_box_timer = QTimer(self)
+        self._cat_box_timer.setSingleShot(True)
+        self._cat_box_timer.timeout.connect(self._cat_moves_into_box)
+
+        self._arm_cat_timers()
+
+    def _arm_cat_timers(self):
+        """(Re)start every idle-escalation timer. Called at startup and on
+        every keystroke — a 60/180/600 s ladder, all restarting together."""
+        self._cat_sleepy_timer.start(60000)
+        self._cat_sleep_timer.start(90000)
+        self._cat_box_timer.start(240000)
+
+    def _cat_moves_into_box(self):
+        """
+        10 minutes idle: the cat moves into a box (Box1 frames) and dozes
+        there (box_idle). When you type again, _connect_editor's textChanged
+        pops it out with box_pop (Box2: rising out of the box) — a tiny
+        welcome-back animation. DeadCat/lay_down have their own triggers
+        (crash log / long combo) and stay out of this ladder.
+        """
+        self.cat.set_state("box", 5_000)
+        self._cat_boxed = True
+        QTimer.singleShot(5_000, lambda: self.cat.set_state("box_idle", 120_000))
+        
     def _update_outline(self):
         editor = self.current_editor()
         if isinstance(editor, PythonEditor):
@@ -271,7 +323,7 @@ class MainWindow(QMainWindow):
         60 s duration: the finished handler overrides by priority —
         stretch/look_away/cry are priority 6, type_excited is 4.
         """
-        self.cat.set_state("type_excited", 60_000)
+        self.cat.set_state("type_excited", 40000)
 
     def _on_run_finished(self, exit_code: int):
         """
@@ -280,14 +332,63 @@ class MainWindow(QMainWindow):
         :param exit_code: process exit code; 0 = success
         """
         if exit_code == 0:
-            self.cat.set_state("stretch", 2500)    # snack / proud stretch
-            self.cat.add_xp(10)                    # XP_RULES["run_success"]
-            # confetti burst once B1 is built (section 10.4)
+            self.cat.set_state("stretch", 2500)
+            self.cat.add_xp(10)
+            r = self.tab_view.geometry()          # center of the editor area
+            self.power.particles.burst(r.width() // 2, r.height() // 3,
+                                       count=40)  # big celebratory burst
         else:
             # Sad frames for a normal failure, Cry frames when the console
             # shows a traceback (crash). If you don't distinguish yet, use
             # look_away for both.
             self.cat.set_state("look_away", 3000)
+
+    def _toggle_power_mode(self, on: bool):
+        """
+        B1/C7: master switch for Power Mode (View -> Power Mode -> Enabled).
+
+        Turning it off also clears any in-flight particles, stops the
+        shake and the glow (the controller's set_enabled does that), so
+        nothing keeps playing after the switch. The individual effect
+        toggles stay as they were and take effect again when the master
+        switch is back on. Persisted in QSettings so the next launch
+        starts in the same mode.
+
+        :param on: True = Power Mode enabled (subject to effect toggles)
+        """
+        power = getattr(self, "power", None)
+        if power is not None:
+            power.set_enabled(on)
+        self.settings.setValue("power_mode", on)
+        self.statusBar().showMessage(
+            "Power Mode ON" if on else "Power Mode OFF", 2000)
+
+    def _toggle_power_particles(self, on: bool):
+        """B1: particles-only switch (View -> Power Mode -> Particles)."""
+        power = getattr(self, "power", None)
+        if power is not None:
+            power.set_particles(on)
+        self.settings.setValue("power_particles", on)
+        self.statusBar().showMessage(
+            "Particles ON" if on else "Particles OFF", 2000)
+
+    def _toggle_power_shake(self, on: bool):
+        """B1: screen-shake-only switch (View -> Power Mode -> Screen Shake)."""
+        power = getattr(self, "power", None)
+        if power is not None:
+            power.set_shake_enabled(on)
+        self.settings.setValue("power_shake", on)
+        self.statusBar().showMessage(
+            "Screen Shake ON" if on else "Screen Shake OFF", 2000)
+
+    def _toggle_power_glow(self, on: bool):
+        """C7: combo-glow-only switch (View -> Power Mode -> Combo Glow)."""
+        power = getattr(self, "power", None)
+        if power is not None:
+            power.set_glow(on)
+        self.settings.setValue("power_glow", on)
+        self.statusBar().showMessage(
+            "Combo Glow ON" if on else "Combo Glow OFF", 2000)
             
     def _on_typing_xp(self):
         """
@@ -408,6 +509,9 @@ class MainWindow(QMainWindow):
         editor.textChanged.connect(self._outline_debounce.start)
         editor.textChanged.connect(self.update_word_count)
         editor.textChanged.connect(self._on_typing_xp)
+        editor.textChanged.connect(lambda: self.power.attach_editor(editor))
+        editor.textChanged.connect(self._arm_cat_timers)
+        editor.textChanged.connect(self._cat_unbox)
         editor.cursorPositionChanged.connect(
             lambda line, column, ed=editor: self._on_editor_cursor_changed(ed, line, column)
         )
@@ -417,11 +521,20 @@ class MainWindow(QMainWindow):
         )
         if isinstance(editor, PythonEditor):
             editor.goto_definition_requested.connect(self._open_file_at_position)
-
+    
+    def _cat_unbox(self):
+        """
+        If the cat was boxed (10+ min idle), pop it out on the first 
+        keystroke - then stop reacting until it boxes again.
+        """
+        if getattr(self, "_cat_boxed", False):
+            self._cat_boxed = False
+            self.cat.set_state("box_pop", 2000)
+    
     def _on_ruff_lsp_error(self, message: str):
         """Expose Ruff LSP startup and protocol failures to the user."""
         print(f"Ruff LSP error {message}")
-        self.statusBar().showMessage(message, 8_000)
+        self.statusBar().showMessage(message, 8000)
 
     def _on_editor_cursor_changed(self, editor, line: int, column: int):
         """Update the status bar only for the focused editor."""
@@ -651,6 +764,41 @@ class MainWindow(QMainWindow):
         hacker_action.setShortcut("Ctrl+Shift+H")
         hacker_action.setShortcutContext(Qt.ApplicationShortcut)
         hacker_action.triggered.connect(lambda: self.set_hacker_mode(not getattr(self, "_hacker", False)))
+
+        # B1/C7: Power Mode dropdown — master switch plus one toggle per
+        # effect. All four states persist in QSettings (power_mode,
+        # power_particles, power_shake, power_glow) like ruff_save_mode.
+        # The handlers guard on self.power because the menu is built
+        # before the controller is created in init_ui().
+        power_menu = view_menu.addMenu("Power Mode")
+
+        self.power_mode_action = power_menu.addAction("Enabled")
+        self.power_mode_action.setCheckable(True)
+        self.power_mode_action.setChecked(
+            self.settings.value("power_mode", True, type=bool))
+        self.power_mode_action.setShortcut("Ctrl+Shift+X")
+        self.power_mode_action.setShortcutContext(Qt.ApplicationShortcut)
+        self.power_mode_action.toggled.connect(self._toggle_power_mode)
+
+        power_menu.addSeparator()
+
+        self.power_particles_action = power_menu.addAction("Particles")
+        self.power_particles_action.setCheckable(True)
+        self.power_particles_action.setChecked(
+            self.settings.value("power_particles", True, type=bool))
+        self.power_particles_action.toggled.connect(self._toggle_power_particles)
+
+        self.power_shake_action = power_menu.addAction("Screen Shake")
+        self.power_shake_action.setCheckable(True)
+        self.power_shake_action.setChecked(
+            self.settings.value("power_shake", True, type=bool))
+        self.power_shake_action.toggled.connect(self._toggle_power_shake)
+
+        self.power_glow_action = power_menu.addAction("Combo Glow")
+        self.power_glow_action.setCheckable(True)
+        self.power_glow_action.setChecked(
+            self.settings.value("power_glow", True, type=bool))
+        self.power_glow_action.toggled.connect(self._toggle_power_glow)
 
         help_menu = menu_bar.addMenu("Help")
 
@@ -1893,7 +2041,7 @@ class MainWindow(QMainWindow):
             self,
             "Pick A File",
             "",
-            "All Files (*);;Text Files (*.txt);;Python Files (*.py);;Markdown Files (*.md)",
+            "All Files (*);;Text Files (*.txt);;Python Files (*.py);;Markdown Files (*.md);;C Files (*.c)",
             options=ops,
         )
 
