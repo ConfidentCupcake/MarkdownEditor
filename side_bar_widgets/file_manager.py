@@ -23,7 +23,7 @@ class FileManager(QTreeView):
 
         self.manager_font = QFont("sans-serif", 13)
 
-        self.model: QFileSystemModel = QFileSystemModel()
+        self.model = GitAwareFileSystemModel(self)
         self.model.setRootPath(os.getcwd())
         # File system filters
         self.model.setFilter(QDir.NoDotAndDotDot | QDir.AllDirs | QDir.Files | QDir.Drives)
@@ -61,7 +61,42 @@ class FileManager(QTreeView):
         # enable file name editing
         # renaming
         self.itemDelegate().closeEditor.connect(self._on_closeEditor)
+        
+        from python_editor.git_integration import GitStatusChecker
+        self.git_checker = GitStatusChecker()
+        self.git_checker.status_ready.connect(self._on_git_status)
+        self.git_statuses = {}
+        
+    def check_git_status(self):
+        """Start a git status check for the current root path."""
+        self.git_checker.check(self.model.rootPath())
+        
+    def _on_git_status(self, statuses: dict):
+        """
+        Store the new statuses and repaint.
 
+        BUGFIX (Windows): the checker emits keys from Path.resolve()
+        (backslash paths, e.g. C:\repo\file.py), while
+        QFileSystemModel.filePath() reports FORWARD slashes
+        (C:/repo/file.py). The lookup in get_git_color() never matched,
+        so no file was ever colored. Normalizing both sides with
+        os.path.normpath (unifies separators) + os.path.normcase
+        (lowercases drive letters on Windows) makes the keys comparable.
+        """
+        self.git_statuses = {
+            os.path.normcase(os.path.normpath(p)): code
+            for p, code in statuses.items()
+        }
+        self.viewport().update()    # repaint with new colors
+
+    def get_git_color(self, filepath: str):
+        """Color for a file path as QFileSystemModel reports it."""
+        status = self.git_statuses.get(
+            os.path.normcase(os.path.normpath(filepath)))
+        if status is None:
+            return None
+        return GitAwareFileSystemModel.GIT_COLORS.get(status)
+    
     def _on_closeEditor(self, editor: QLineEdit):
         if self.is_renaming:
             self.rename_file_with_index()
@@ -282,3 +317,34 @@ class FileManager(QTreeView):
         e.accept()
 
         return super().dropEvent(e)
+    
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
+from PyQt5.QtWidgets import QFileSystemModel
+
+
+class GitAwareFileSystemModel(QFileSystemModel):
+    """QFileSystemModel that colors filenames by git status."""
+
+    # Colors tuned to the editor's CustomDark palette
+    GIT_COLORS = {
+        " M": "#e5c07b",   # modified (not staged) — yellow
+        "M ": "#98c379",   # modified (staged)     — green
+        "A ": "#98c379",   # added (staged)        — green
+        "R ": "#98c379",   # renamed (staged)      — green
+        "??": "#56b6c2",   # untracked             — cyan
+        "D ": "#e06c75",   # deleted (staged)      — red
+        " D": "#e06c75",   # deleted (not staged)  — red
+    }
+
+    def __init__(self, file_manager):
+        super().__init__()
+        self.file_manager = file_manager
+
+    def data(self, index, role=Qt.DisplayRole):
+        if role == Qt.ForegroundRole:
+            color = self.file_manager.get_git_color(self.filePath(index))
+            if color:
+                return QColor(color)
+        return super().data(index, role)

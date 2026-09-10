@@ -175,6 +175,11 @@ class MainWindow(QMainWindow):
 
         self.set_up_menu()
         self.set_up_body()
+        
+        self._git_refresh_timer = QTimer(self)
+        self._git_refresh_timer.setInterval(15000)
+        self._git_refresh_timer.timeout.connect(self.file_manager.check_git_status)
+        self._git_refresh_timer.start()
 
         # Find/Replace bar. Hidden by default
         self.find_bar = FindReplaceBar(show_replace=False, parent=self)
@@ -429,7 +434,9 @@ class MainWindow(QMainWindow):
         path = getattr(editor, "path", None)
         title = path.name if path is not None else "Untitled"
         self.tab_view.set_editor_title(editor, title)
-
+        if getattr(editor, "path", None) is not None:
+            self.file_manager.check_git_status()
+        
     def update_cursor_position(self, line: int, index: int):
         """
         Update the Ln/Col display in the status bar.
@@ -755,6 +762,21 @@ class MainWindow(QMainWindow):
         starting_window_size.triggered.connect(self._startup_window_size)
 
         view_menu.addSeparator()
+        
+        git_refresh_action = view_menu.addAction("Refresh Git Status")
+        git_refresh_action.setShortcut("Ctrl+Shift+G")
+        git_refresh_action.setShortcutContext(Qt.ApplicationShortcut)
+        # BUGFIX: was "connect(self.file_manager.check_git_status)" — a
+        # direct bound-method reference resolves self.file_manager RIGHT
+        # HERE, but set_up_menu() runs BEFORE set_up_body() creates the
+        # FileManager (line order in init_ui), so the attribute does not
+        # exist yet -> AttributeError at startup. The lambda defers the
+        # lookup to trigger time — the menu can only fire after the
+        # window is shown, long after file_manager exists (same
+        # launch-order rule as the cat / power-mode handlers).
+        git_refresh_action.triggered.connect(
+            lambda: self.file_manager.check_git_status())
+        
         settings_action = view_menu.addAction("Settings")
         settings_action.setShortcut("Ctrl+Alt+S")
         settings_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -2065,6 +2087,7 @@ class MainWindow(QMainWindow):
         self.file_manager.model.setRootPath(new_folder)
         self.file_manager.setRootIndex(self.file_manager.model.index(new_folder))
         self.statusBar().showMessage(f"Opened {new_folder}", 2000)
+        self.file_manager.check_git_status()
 
     def save_file(self):
         """
@@ -2429,10 +2452,20 @@ class MainWindow(QMainWindow):
             self.terminal.stop()
         if hasattr(self, "python_runner") and self.python_runner:
             self.python_runner.stop()
+        # BUGFIX: was "hasattr(self, 'git_checker')" — that attribute
+        # never exists on MainWindow (the checker lives on the file
+        # manager), so the guard was always False and the git thread was
+        # never shut down: "QThread: Destroyed while thread is still
+        # running" on exit. Also moved BEFORE super().closeEvent() so
+        # shutdown finishes before the window widgets are torn down.
+        fm = getattr(self, "file_manager", None)
+        if fm is not None and hasattr(fm, "git_checker"):
+            fm.git_checker.shutdown()
         if hasattr(self, "settings"):
             self.settings.setValue("recent_files", self.recent_files)
         self.ruff_lsp_client.shutdown()
         super().closeEvent(event)
+        
         
     def save_session(self):
         """
