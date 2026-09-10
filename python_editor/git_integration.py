@@ -36,16 +36,16 @@ class GitStatusChecker(QThread):
         self.requestInterruption()
         if self.isRunning():
             self.wait(2000)
-            
-    def _git(self, *args):
+
+    def _git(self, *args, binary=False):
         """Run a git command in repo_path. Returns stdout or None."""
         result = subprocess.run(
             ["git", *args],
             cwd=self.repo_path,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            text=not binary,
+            encoding=None if binary else "utf-8",
+            errors=None if binary else "replace",
             timeout=5,
         )
         if result.returncode != 0:
@@ -65,7 +65,7 @@ class GitStatusChecker(QThread):
             if self._shutting_down or self.isInterruptionRequested():
                 return
             
-            output = self._git("status", "--porcelain")
+            output = self._git("status", "--porcelain=v1", "-z", binary=True)
             if output is None:
                 # BUGFIX: was "self.status.ready.emit({})" — a typo that
                 # raised AttributeError and relied on the blanket except
@@ -75,14 +75,19 @@ class GitStatusChecker(QThread):
             
             statuses = {}
             
-            for line in output.splitlines():
-                if len(line) < 4:
+            records = output.split(b"\0")
+            index = 0
+            while index < len(records):
+                record = records[index]
+                index += 1
+                if len(record) < 4:
                     continue
-                
-                code = line[:2]
-                filepath = line[3:].strip('"')
-                if " -> " in filepath:
-                    filepath = filepath.split(" -> ", 1)[1]
+                code = record[:2].decode("ascii", errors="replace")
+                filepath = record[3:].decode("utf-8", errors="surrogateescape")
+                if code[0] in ("R", "C") and index < len(records):
+                    # In porcelain -z mode the destination is in the first
+                    # record and the source follows as a second NUL field.
+                    index += 1
                 # Porcelain paths are relative to the REPO root, which mey
                 # be a parent fo the folder opened in the FileManager.
                 statuses[str((repo_root / filepath).resolve())] = code
@@ -94,5 +99,3 @@ class GitStatusChecker(QThread):
             
         except Exception:
             self.status_ready.emit({})
-            
-            

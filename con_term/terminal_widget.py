@@ -12,11 +12,11 @@ import shutil
 
 import sys
 import os
-from PyQt5.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QEvent
-from PyQt5.QtGui import QFont, QColor, QTextCursor, QKeyEvent
+from PyQt5.QtCore import Qt, QProcess, QProcessEnvironment, QEvent
+from PyQt5.QtGui import QFont, QTextCursor, QKeySequence
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
-    QPushButton, QLabel, QComboBox
+    QApplication, QPushButton, QLabel, QComboBox
 )
 
 class TerminalWidget(QWidget):
@@ -267,9 +267,9 @@ class TerminalWidget(QWidget):
         if self.process.state() != QProcess.Running:
             return True # block all input when process isn't running
 
-        # Enter/Return -- send the current line to process
+        cursor = self.output.textCursor()
+
         if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-            cursor = self.output.textCursor()
             cursor.movePosition(QTextCursor.End)
             end_pos = cursor.position()
 
@@ -281,26 +281,48 @@ class TerminalWidget(QWidget):
             # Insert a newline in the display
             cursor.movePosition(QTextCursor.End)
             cursor.insertText("\n")
+            self.output.setTextCursor(cursor)
 
             # Send the line + newline to the process
             self.process.write((line + "\n").encode("utf-8"))
 
             # Update input start position
-            self._input_start_pos = self.output.textCursor().position()
+            self._input_start_pos = cursor.position()
             return True # consume the event
+
+        if event.matches(QKeySequence.Paste):
+            cursor.movePosition(QTextCursor.End)
+            cursor.insertText(QApplication.clipboard().text().replace("\r\n", "\n"))
+            self.output.setTextCursor(cursor)
+            return True
 
         # Backspace -- only allow if cursor is past the input start position
         if event.key() == Qt.Key.Key_Backspace:
-            cursor = self.output.textCursor()
-            if cursor.position() <= self._input_start_pos:
-                return True # block backspace at/before input start
-            cursor.deletePreviousChar()
+            if cursor.hasSelection():
+                if cursor.selectionStart() < self._input_start_pos:
+                    return True
+                cursor.removeSelectedText()
+            elif cursor.position() > self._input_start_pos:
+                cursor.deletePreviousChar()
+            self.output.setTextCursor(cursor)
             return True # consume event
+
+        if event.key() == Qt.Key.Key_Delete:
+            if cursor.hasSelection() and cursor.selectionStart() < self._input_start_pos:
+                return True
+            if cursor.position() < self._input_start_pos:
+                return True
+            cursor.deleteChar()
+            self.output.setTextCursor(cursor)
+            return True
 
         # Regular character -- insert it at cursor position
         if event.text():
-            cursor = self.output.textCursor()
+            if cursor.hasSelection() and cursor.selectionStart() < self._input_start_pos:
+                cursor.clearSelection()
+            cursor.movePosition(QTextCursor.End)
             cursor.insertText(event.text())
+            self.output.setTextCursor(cursor)
             return True # consume the Event
 
         # Let other keys (arrow keys, etc. pass through QPlainTextEdit
@@ -329,4 +351,3 @@ class TerminalWidget(QWidget):
         if self.process.state() != QProcess.NotRunning:
             self.process.kill()
             self.process.waitForFinished(2000)
-

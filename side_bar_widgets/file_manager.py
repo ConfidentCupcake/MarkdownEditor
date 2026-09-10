@@ -1,13 +1,20 @@
-from PyQt5.QtWidgets import *
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.Qsci import *
-
-from pathlib import Path
-import shutil
 import os
-import sys
+import shutil
 import subprocess
+import sys
+from pathlib import Path
+
+from PyQt5.QtCore import QDir, QModelIndex, QPoint, Qt
+from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QIcon
+from PyQt5.QtWidgets import (
+    QAbstractItemView,
+    QFileSystemModel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QSizePolicy,
+    QTreeView,
+)
 
 class FileManager(QTreeView):
     def __init__(self, set_new_tab, main_window, parent=None):
@@ -119,6 +126,7 @@ class FileManager(QTreeView):
         menu = QMenu()
         menu.addAction("New File")
         menu.addAction("New Folder")
+        menu.addAction("Open In File Manager")
 
         if ix.column() == 0:
             menu.addAction("Rename")
@@ -134,11 +142,11 @@ class FileManager(QTreeView):
         elif action.text() == "Delete":
             self.action_delete(ix)
         elif action.text() == "New Folder":
-            self.action_new_folder()
+            self.action_new_folder(ix)
         elif action.text() == "New File":
             self.action_new_file(ix)
         elif action.text() == "Open In File Manager":
-            self.action_open_in_file_manager()
+            self.action_open_in_file_manager(ix)
         else:
             pass
 
@@ -147,7 +155,12 @@ class FileManager(QTreeView):
         dialog.setFont(self.manager_font)
         dialog.font().setPointSize(13)
         dialog.setWindowTitle(title)
-        dialog.setWindowIcon(QIcon(":/icons/close-icon.png"))
+        root = (
+            Path(sys._MEIPASS)
+            if getattr(sys, "frozen", False)
+            else Path(__file__).resolve().parent.parent
+        )
+        dialog.setWindowIcon(QIcon(str(root / "icons" / "close-icon.svg")))
         dialog.setText(msg)
         dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         dialog.setDefaultButton(QMessageBox.No)
@@ -171,7 +184,7 @@ class FileManager(QTreeView):
 
             if new_path == old_path:
                 return
-            self.main_window.on_file_renamed(
+            self.main_window.on_file_rename(
                 old_path=old_path,
                 new_path=new_path,
                 is_directory=self._rename_is_directory,
@@ -269,61 +282,74 @@ class FileManager(QTreeView):
         idx = self.model.index(str(f.absolute()))
         self.edit(idx)
 
-    def action_new_folder(self):
-        f = Path(self.model.rootPath()) / "New Folder"
+    def action_new_folder(self, ix=None):
+        parent = Path(self.model.rootPath())
+        if ix is not None and ix.isValid():
+            selected = Path(self.model.filePath(ix))
+            parent = selected if selected.is_dir() else selected.parent
+        f = parent / "New Folder"
         count = 1
         while f.exists():
             f = Path(f.parent / f"New Folder{count}")
             count += 1
-        idx = self.model.mkdir(self.rootIndex(), f.name)
+        idx = self.model.mkdir(self.model.index(str(parent)), f.name)
         # edit that index
         self.edit(idx)
 
     def action_open_in_file_manager(self, ix: QModelIndex):
+        if not ix.isValid():
+            return
         path = os.path.abspath(self.model.filePath(ix))
         is_dir = self.model.isDir(ix)
-        if os.name == "nt":
-            # Windows
-            if is_dir:
-                subprocess.Popen(f"explorer '{path}'")
-            else:
-                subprocess.Popen(f'explorer /select,"{path}"')
-        elif os.name == "posix":
-            # Linux or Mac OS
-            if sys.platform == "darwin":
-                # Mac Os
+        try:
+            if os.name == "nt":
                 if is_dir:
-                    subprocess.Popen(["open", path])
+                    subprocess.Popen(["explorer", path])
                 else:
-                    subprocess.Popen(["open", "-R", path])
+                    subprocess.Popen(["explorer", f"/select,{path}"])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path] if is_dir else ["open", "-R", path])
+            elif os.name == "posix":
+                subprocess.Popen(["xdg-open", path if is_dir else os.path.dirname(path)])
             else:
-                # Linux
-                subprocess.Popen(["xdg-open", os.path.dirname(path)])
-        else: raise OSError(f"Unsupported OS: {os.name}")
+                raise OSError(f"Unsupported OS: {os.name}")
+        except OSError as error:
+            QMessageBox.warning(self, "Open in file manager", str(error))
 
     def dropEvent(self, e:QDropEvent) -> None:
-        root_path = Path(self.model.rootPath())
-        if e.mimeData().hasUrls():
+        if not e.mimeData().hasUrls():
+            e.ignore()
+            return
+        index = self.indexAt(e.pos())
+        if index.isValid():
+            selected = Path(self.model.filePath(index))
+            target_dir = selected if selected.is_dir() else selected.parent
+        else:
+            target_dir = Path(self.model.rootPath())
+        copy_requested = bool(e.keyboardModifiers() & Qt.ControlModifier)
+        try:
             for url in e.mimeData().urls():
-                path = Path(url.toLocalFile())
-                if path.is_dir():
-                    shutil.copytree(path, root_path / path.name)
-                else:
-                    if not path.parent.samefile(root_path):
-                        shutil.copy(path, root_path / path.name)
+                source = Path(url.toLocalFile()).resolve()
+                destination = (target_dir / source.name).resolve()
+                if source == destination:
+                    continue
+                if source.is_dir() and source in destination.parents:
+                    raise OSError("Cannot copy a folder into itself")
+                if destination.exists():
+                    raise FileExistsError(f"Destination already exists: {destination}")
+                if copy_requested:
+                    if source.is_dir():
+                        shutil.copytree(source, destination)
                     else:
-                        shutil.move(path, root_path / path.name)
-
+                        shutil.copy2(source, destination)
+                else:
+                    shutil.move(str(source), str(destination))
+        except OSError as error:
+            QMessageBox.critical(self, "File operation", str(error))
+            e.ignore()
+            return
+        e.setDropAction(Qt.CopyAction if copy_requested else Qt.MoveAction)
         e.accept()
-
-        return super().dropEvent(e)
-    
-
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import QFileSystemModel
-
-
 class GitAwareFileSystemModel(QFileSystemModel):
     """QFileSystemModel that colors filenames by git status."""
 

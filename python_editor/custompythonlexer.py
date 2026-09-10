@@ -8,6 +8,7 @@ import types
 import builtins
 import os
 import sys
+from pathlib import Path
 
 try:
     from lexer_fast import style_chunk as _cython_style
@@ -17,9 +18,9 @@ except ImportError:
     _HAS_CYTHON = False
 
 def _resource_path(relative_path):
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+    root = (Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS")
+            else Path(__file__).resolve().parent.parent)
+    return str(root / relative_path)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -51,7 +52,7 @@ def _py_pack_state(in_string, in_comment, triple, string_delim, in_fstring,
     if in_string: state |= 1
     if in_comment: state |= 2
     if triple: state |= 4
-    if string_delim == 34: state |= 8
+    if string_delim == '"': state |= 8
     if in_fstring: state |= 16
     if escape: state |= 32
     if in_fexpr: state |= 64
@@ -67,7 +68,7 @@ def _py_unpack_state(state):
         1 if (state & 1) else 0,
         1 if (state & 2) else 0,
         1 if (state & 4) else 0,
-        34 if (state & 8) else 39,
+        '"' if (state & 8) else "'",
         1 if (state & 16) else 0,
         1 if (state & 32) else 0,
         1 if (state & 64) else 0,
@@ -209,7 +210,7 @@ def _py_compute_state(text, target_pos):
 
         # not in string/comment
         if c in "frb" and i + 1 < target_pos and text[i + 1:i + 2].decode("latin-1") in "\"'":
-            next_c = text[i + 1]
+            next_c = text[i + 1:i + 2].decode("latin-1")
             if i + 3 < length and text[i + 2:i + 3].decode("latin-1") == next_c and text[i + 3:i + 4].decode("latin-1") == next_c:
                 in_string = triple_string = 1
                 string_delim = next_c
@@ -555,7 +556,7 @@ def _py_style_chunk(text, start, end, prev_state, keywords, builtins, magic_meth
             continue
 
         if c in "\n\r":
-            if c == "\r" and i + 1 < end and text[i + 1] == "\n":
+            if c == "\r" and i + 1 < end and text[i + 1:i + 2] == b"\n":
                 results.append((2, S_DEFAULT)); i += 2
             else:
                 results.append((1, S_DEFAULT)); i += 1
@@ -853,7 +854,7 @@ class NeutronLexer(QsciLexerCustom):
         self.editor = editor
         self.language_name = language_name
         self.theme_json = None
-        self.theme = theme or _resource_path(os.path.join("../themes", "theme.json"))
+        self.theme = theme or _resource_path(os.path.join("themes", "theme.json"))
         self.paper_override = paper          # QColor or None
 
         self.token_list = []

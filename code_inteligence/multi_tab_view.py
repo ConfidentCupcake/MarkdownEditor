@@ -1,8 +1,7 @@
 from pathlib import Path
-from typing import Optional
 
 from PyQt5.QtCore import Qt, QEvent, pyqtSignal
-from PyQt5.QtWidgets import QSplitter, QTabWidget, QWidget
+from PyQt5.QtWidgets import QSplitter, QTabWidget
 
 class MultiTabView(QSplitter):
     currentEditorChanged = pyqtSignal(object)       # Emitted whenever the active Editor changes
@@ -319,6 +318,9 @@ class MultiTabView(QSplitter):
     def close_all_groups(self):
         for editor in list(self.all_editors()):
             self.closeEditorRequested.emit(editor)
+            if self.group_for_editor(editor) is not None:
+                return False
+        return True
             
     def _on_editor_focused(self, editor):
         group = self.group_for_editor(editor)

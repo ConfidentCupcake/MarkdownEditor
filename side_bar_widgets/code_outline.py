@@ -51,7 +51,7 @@ class CodeOutlineTree(QTreeWidget):
                 class_item.setText(0, f"class {node.name}")
                 class_item.setData(0, Qt.UserRole, (node.lineno - 1, node.col_offset))
                 class_item.setForeground(0, self._color("#e5c07b"))
-                
+
                 # Add methods as children
                 for child in node.body:
                     if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -60,7 +60,7 @@ class CodeOutlineTree(QTreeWidget):
                         method_item.setData(0, Qt.UserRole, (child.lineno - 1, child.col_offset))
                         method_item.setForeground(0, self._color("#61afef"))
             
-            elif isinstance(ast.FunctionDef, ast.AsyncFunctionDef):
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 function_item = QTreeWidgetItem(self)
                 function_item.setText(0, f"def {node.name}()")
                 function_item.setData(0, Qt.UserRole, (node.lineno - 1, node.col_offset))
@@ -74,11 +74,8 @@ class CodeOutlineTree(QTreeWidget):
         data = item.data(0, Qt.UserRole)
         if data is not None:
             line, col = data
-            self.symbol_clicked.emit(line, column)
-            
+            self.symbol_clicked.emit(line, col)
+
     def _color(self, hex_color: str):
         from PyQt5.QtGui import QColor
         return QColor(hex_color)
-        
-            
-                

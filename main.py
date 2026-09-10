@@ -1,10 +1,18 @@
 import json
 import os
 import sys
+import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 import traceback
 import datetime
+
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu-shader-disk-cache")
+
 import markdown
+import resources_rc  # noqa: F401 - register resources generated from icons/resources.qrc
 
 from PyQt5.Qsci import *
 from PyQt5.QtCore import *
@@ -28,9 +36,19 @@ from cozy.cat_controller import CatController
 APP_VERSION = "v1.9.2"
 
 def _excepthook(exc_type, exc, tb):
-    with open(resource_path("crash_log.txt"), "a", encoding="utf-8") as f:
-        f.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n")
-        traceback.print_exception(exc_type, exc, tb, file=f)
+    try:
+        log_dir = Path(QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "crash_log.txt"
+        if log_path.exists() and log_path.stat().st_size > 1024 * 1024:
+            rotated = log_dir / "crash_log.1.txt"
+            rotated.unlink(missing_ok=True)
+            log_path.replace(rotated)
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(f"\n[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}]\n")
+            traceback.print_exception(exc_type, exc, tb, file=f)
+    except OSError:
+        pass
     traceback.print_exception(exc_type, exc, tb) # also as stderr
     
 sys.excepthook = _excepthook
@@ -48,12 +66,12 @@ def resource_path(relative_path):
 
     Docs: https://pyinstaller.org/en/stable/runtime-information.html
     """
-    if hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
+    root = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(__file__).resolve().parent
+    return str(root / relative_path)
 
 
 class MainWindow(QMainWindow):
+    update_available = pyqtSignal(str, str)
     WIDTH = 1400
     HEIGHT = 900
 
@@ -62,9 +80,12 @@ class MainWindow(QMainWindow):
         self._dirty_editors = set()
         self.python_runner = PythonRunner(self)
         self.settings = QSettings("CodeEditor", "CodeEditor")
+        self._hacker = self.settings.value("theme", "theme.json", type=str) == "hacker.json"
+        self._pre_hacker_theme = "theme.json"
         # Load the saved recent files list, default to empty list
         self.recent_files = self.settings.value("recent_files", [], type=list)
         self.ruff_save_mode = self.settings.value("ruff_save_mode", "safe_format", type=str)
+        self.update_available.connect(self._show_update_dialog)
 
         # Detect if running as a bundled exe
         if hasattr(sys, "_MEIPASS"):
@@ -95,7 +116,9 @@ class MainWindow(QMainWindow):
         # Create exactly one persistent Ruff server after the selected Python interpreter is known.
         # The interpreter must be the same environment where 'python -m ruff --version' succeeds.
         self.ruff_lsp_client = RuffLspClient(
-            python_executable=self.python_runner.interpreter, workspace_root=Path.cwd(), parent=self
+            python_executable=self.python_runner.interpreter,
+            workspace_root=Path(__file__).resolve().parent,
+            parent=self,
         )
         # Infrastructure errors must be visible; otherwise a missing Ruff package or failed server
         # startup looks exactly like "no diagnostics" to the user.
@@ -136,10 +159,11 @@ class MainWindow(QMainWindow):
         # Reopen the tabs from the previous sessions (no-op when
         # the feature is disabled or nothing was saved)
         self._apply_settings(self._load_settings())
+        if self._hacker:
+            self._set_scanlines_visible(True)
         self._restore_session()
 
     def init_ui(self):
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu-shader-disk-cache"
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(100)
@@ -481,7 +505,7 @@ class MainWindow(QMainWindow):
         """Create the correct editor type for this individual document."""
         # A saved file chooses its editor based on file extension. This prevents
         # a .py file from being opened as MarkdownEditor, where Ruff cannot run.
-        if path is not None:
+        if path is not None and is_python_file is None:
             path = Path(path)
             is_python_file = path.suffix.lower() in {".py", ".pyw", ".pyi"}
         # An untitled document has no extension yet, so use the active editor mode.
@@ -542,6 +566,22 @@ class MainWindow(QMainWindow):
         """Expose Ruff LSP startup and protocol failures to the user."""
         print(f"Ruff LSP error {message}")
         self.statusBar().showMessage(message, 8000)
+
+    def _restart_ruff(self, python_executable: str):
+        """Replace the shared Ruff server and reconnect every Python tab."""
+        old_client = self.ruff_lsp_client
+        client = RuffLspClient(
+            python_executable=python_executable,
+            workspace_root=Path(__file__).resolve().parent,
+            parent=self,
+        )
+        client.server_error.connect(self._on_ruff_lsp_error)
+        self.ruff_lsp_client = client
+        for editor in self.tab_view.all_editors():
+            if isinstance(editor, PythonEditor) and editor.ruff_lsp is not None:
+                editor.ruff_lsp.set_client(client)
+        old_client.shutdown()
+        client.start()
 
     def _on_editor_cursor_changed(self, editor, line: int, column: int):
         """Update the status bar only for the focused editor."""
@@ -785,7 +825,10 @@ class MainWindow(QMainWindow):
         hacker_action = view_menu.addAction("Hacker-Mode")
         hacker_action.setShortcut("Ctrl+Shift+H")
         hacker_action.setShortcutContext(Qt.ApplicationShortcut)
-        hacker_action.triggered.connect(lambda: self.set_hacker_mode(not getattr(self, "_hacker", False)))
+        hacker_action.setCheckable(True)
+        hacker_action.setChecked(self._hacker)
+        hacker_action.toggled.connect(self.set_hacker_mode)
+        self.hacker_action = hacker_action
 
         # B1/C7: Power Mode dropdown — master switch plus one toggle per
         # effect. All four states persist in QSettings (power_mode,
@@ -867,12 +910,12 @@ class MainWindow(QMainWindow):
 
         path = getattr(editor, "path", None)
         if path is None:
-            self.save_as()
-            path = getattr(editor, "path", None)
-            if path is None:
+            if not self.save_as():
                 return
-        else:
-            self.save_file()
+            path = getattr(editor, "path", None)
+        elif not self.save_file():
+            self.statusBar().showMessage("Run cancelled: save failed", 4000)
+            return
 
         # QInputDialog.getText shows a dialog with a single text input.
         # Parameters: parent, title, label, echo mode, default text
@@ -898,22 +941,18 @@ class MainWindow(QMainWindow):
         original_editor = self.current_editor()
 
         for editor in list(self.tab_view.all_editors()):
+            if editor not in self._dirty_editors:
+                continue
             path = getattr(editor, "path", None)
 
             if path is None:
-                continue
-            try:
-                path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
-            except OSError as error:
-                QMessageBox.warning(
-                    self,
-                    "Save All",
-                    f"Could not save {path}:\n{error}",
-                )
-                continue
-
-            self.mark_editor_clean(editor)
-            saved_count += 1
+                self.tab_view.focus_editor(editor)
+                if self.save_as():
+                    saved_count += 1
+                    continue
+                break
+            if self._save_editor_to_path(editor, Path(path)):
+                saved_count += 1
 
         if original_editor is not None:
             self.tab_view.focus_editor(original_editor)
@@ -1129,13 +1168,15 @@ class MainWindow(QMainWindow):
         path = getattr(editor, "path", None)
         if path is None:
             # Untitled file -> need to save first
-            self.save_as()
+            if not self.save_as():
+                return
             path = getattr(editor, "path", None)
             if path is None:
                 return  # User cancelled the sace dialog
 
-        else:
-            self.save_file()
+        elif not self.save_file():
+            self.statusBar().showMessage("Run cancelled: save failed", 4000)
+            return
 
         # Show the console
         self.console_dock.show()
@@ -1163,52 +1204,27 @@ class MainWindow(QMainWindow):
             self, "Choose Python Interpreter", "", "Python Executable (python.exe);;All Files (*)"
         )
         if path:
+            previous = self.python_runner.interpreter
             self.python_runner.set_interpreter(path)
             self.statusBar().showMessage(f"Python Interpreter: {path}", 3000)
             self._save_interpreter(path)
+            if previous != path and hasattr(self, "ruff_lsp_client"):
+                self._restart_ruff(path)
 
     def _save_interpreter(self, path: str):
-        """Save the chosen interpreter to settings.json."""
-        import json
-
-        settings_path = Path(__file__).parent / "settings.json"
-        settings = {}
-        if settings_path.exists():
-            settings = json.loads(settings_path.read_text())
-        settings["interpreter"] = path
-        settings_path.write_text(json.dumps(settings, indent=2))
+        """Persist the selected interpreter in the platform settings store."""
+        self.settings.setValue("interpreter", path)
+        self.settings.sync()
 
     def _load_interpreter(self) -> str:
-        """Load the saved interpreter, or default to sys.executable."""
-        import json
-        import sys
-
-        settings_path = Path(__file__).parent / "settings.json"
-        if settings_path.exists():
-            settings = json.loads(settings_path.read_text())
-            return settings.get("interpreter", sys.executable)
-        return sys.executable
+        """Load a valid saved interpreter, or default to this Python."""
+        path = self.settings.value("interpreter", sys.executable, type=str)
+        return path if path and Path(path).is_file() else sys.executable
 
     def _load_settings(self) -> dict:
         """
-        Merge settings.json and QSettings into one flat dictionary.
-        
-        The App historically stores settings in TWO places:
-            - settings.json (next to main.py) -> only the interpreter written by _save_interpreter().
-              Kept as JSON because it must be readable before QApplication exists and easy to hand-edit.
-            - QSettings("CodeEditor", "CodeEditor") -> registry/Ini keys like "ruff_save_mode" and "recent_files".
-            Chosen by Qt for crash safe incremental writes.
+        Load all user preferences from the platform-native QSettings store.
         """
-        
-        # --- settings.json side (interpreter only) --- #
-        settings_path = Path(__file__).parent / "settings.json"
-        data = {}
-        if settings_path.exists():
-            try:
-                data = json.loads(settings_path.read_text())
-            except json.JSONDecodeError:
-                # A corrupted settings.jsón must never crash the app -- fallthrough with an empty dict and the defaults below
-                pass
         
         # --- QSettings side --- #
         # .value(key, default, type=) coerces the stored values: QSettings serialises booleans/ints as strings
@@ -1220,7 +1236,9 @@ class MainWindow(QMainWindow):
         theme_editor = self._read_theme_editor()
 
         return {
-            "interpreter": data.get("interpreter", self.python_runner.interpreter),
+            "interpreter": self.settings.value(
+                "interpreter", self.python_runner.interpreter, type=str
+            ),
             # BUGFIX: read/write key mismatch - this read "ruff_safe_mode"
             # while _save_settings() writes "ruff_save_mode", so the saved
             # Ruff mode never survived a restart.
@@ -1230,9 +1248,10 @@ class MainWindow(QMainWindow):
             # paper: QSettings override (color picker) wins over the theme;
             # theme_paper is the theme's OWN value, so the dialog's
             # "Reset to theme" button can drop the override.
-            "paper_color": self.settings.value(
-                "paper_color", theme_editor.get("paper_color", "#1e1f22"),
-                type=str),
+            "paper_color": (
+                self.settings.value("paper_color", type=str)
+                if self.settings.contains("paper_color") else None
+            ),
             "theme_paper": theme_editor.get("paper_color", "#1e1f22"),
             "tab_width": self.settings.value("tab_width", 4, type=int),
             "word_wrap": self.settings.value("word_wrap", False, type=bool),
@@ -1243,10 +1262,7 @@ class MainWindow(QMainWindow):
         }
         
     def _save_settings(self, new_settings: dict):
-        """Persist an edited settings dictionary back to both stores.
-
-        The interpreter goes into settings.json (preserving any other
-        keys already in there); everything else becomes a QSettings key.
+        """Persist an edited settings dictionary to QSettings.
         Called only after the user clicked Save in the dialog.
 
         Parameters
@@ -1254,19 +1270,7 @@ class MainWindow(QMainWindow):
         new_settings : dict
             The dictionary returned by SettingsDialog.get_settings().
         """
-        import json
-
-        # --- settings.json: read-modify-write -------------------------- #
-        # Read the existing file first so unrelated keys survive.
-        settings_path = Path(__file__).parent / "settings.json"
-        data = {}
-        if settings_path.exists():
-            try:
-                data = json.loads(settings_path.read_text())
-            except json.JSONDecodeError:
-                pass
-        data["interpreter"] = new_settings["interpreter"]
-        settings_path.write_text(json.dumps(data, indent=2))
+        self.settings.setValue("interpreter", new_settings["interpreter"])
 
         # --- QSettings -------------------------------------------------- #
         # NOTE: font_family / font_size are NOT QSettings keys anymore —
@@ -1275,6 +1279,11 @@ class MainWindow(QMainWindow):
                     "word_wrap", "restore_tabs", "theme", "line_numbers",
                     "highlight_line"):
             self.settings.setValue(key, new_settings[key])
+        if new_settings.get("paper_color") is None:
+            self.settings.remove("paper_color")
+        else:
+            self.settings.setValue("paper_color", new_settings["paper_color"])
+        self.settings.sync()
 
     def open_settings(self):
         """Open the settings dialog and apply the result if Save was hit.
@@ -1303,11 +1312,6 @@ class MainWindow(QMainWindow):
                 self._write_theme_editor(new_settings["font_family"],
                                          new_settings["font_size"])
 
-            # Paper color: stored as a QSettings override on top of the
-            # theme (the color picker choice wins until reset to default).
-            self.settings.setValue("paper_color",
-                                    new_settings["paper_color"])
-
             self._save_settings(new_settings)
 
             # ruff_save_mode is cached in __init__; keep the cache in
@@ -1333,9 +1337,13 @@ class MainWindow(QMainWindow):
             self._apply_editor_settings(editor, settings)
 
         if settings["interpreter"]:
+            previous = self.python_runner.interpreter
             self.python_runner.set_interpreter(settings["interpreter"])
             self.statusBar().showMessage(
                 f"Interpreter: {self.python_runner.interpreter}", 3000)
+            if (previous != settings["interpreter"]
+                    and hasattr(self, "ruff_lsp_client")):
+                self._restart_ruff(settings["interpreter"])
     
     def set_hacker_mode(self, on: bool):
         """
@@ -1347,19 +1355,32 @@ class MainWindow(QMainWindow):
         
         :param on: True = hacker.json + scanlines; False = default theme 
         """
-        from cozy.overlays import ScanlineOverlay
-        
-        if on and not hasattr(self, "scanlines"):
-            self. scanlines = ScanlineOverlay(self)
-        if hasattr(self, "scnalines"):
-            self.scanlines.setVisible(on)
+        if on and not self._hacker:
+            self._pre_hacker_theme = self.settings.value("theme", "theme.json", type=str)
+        self._hacker = bool(on)
+        self._set_scanlines_visible(self._hacker)
             
         settings = self._load_settings()
-        settings["theme"] = "hacker.json" if on else "theme.json"
+        settings["theme"] = "hacker.json" if self._hacker else self._pre_hacker_theme
         self._save_settings(settings)
         self._apply_settings(settings)
         
         self.statusBar().showMessage("HACK THE PLANET" if on else "Back to reality", 2500)
+
+    def _set_scanlines_visible(self, visible: bool):
+        from cozy.overlays import ScanlineOverlay
+
+        if not hasattr(self, "scanlines"):
+            self.scanlines = ScanlineOverlay(self)
+        self.scanlines.setGeometry(self.rect())
+        self.scanlines.setVisible(visible)
+        if visible:
+            self.scanlines.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "scanlines"):
+            self.scanlines.setGeometry(self.rect())
         
         
     def _active_theme_path(self):
@@ -1409,9 +1430,17 @@ class MainWindow(QMainWindow):
         :param font_family: e.g. "JetBrains Mono"
         :param font_size: point size
         """
-        path = self._active_theme_path()
-        if not path:
+        source = self._active_theme_path()
+        if not source:
             return
+        theme_name = self.settings.value("theme", "theme.json", type=str)
+        config_root = Path(QStandardPaths.writableLocation(
+            QStandardPaths.AppConfigLocation
+        )) / "themes"
+        config_root.mkdir(parents=True, exist_ok=True)
+        path = config_root / theme_name
+        if not path.exists():
+            shutil.copy2(source, path)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -1419,9 +1448,15 @@ class MainWindow(QMainWindow):
             editor.setdefault("font", {})
             editor["font"]["family"] = font_family
             editor["font"]["font-size"] = int(font_size)
-            with open(path, "w", encoding="utf-8") as f:
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            with open(temporary, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, path)
         except (OSError, json.JSONDecodeError) as e:
+            if "temporary" in locals():
+                temporary.unlink(missing_ok=True)
             self.statusBar().showMessage(f"Could not write theme: {e}", 4000)
 
     def _theme_path(self, theme_name):
@@ -1432,6 +1467,11 @@ class MainWindow(QMainWindow):
         """
         if not theme_name:
             return None
+        user_candidate = Path(QStandardPaths.writableLocation(
+            QStandardPaths.AppConfigLocation
+        )) / "themes" / theme_name
+        if user_candidate.is_file():
+            return str(user_candidate)
         base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) \
             else Path(__file__).resolve().parent
         candidate = base / "themes" / theme_name
@@ -1504,6 +1544,7 @@ class MainWindow(QMainWindow):
             from PyQt5.Qsci import QsciAPIs
             if getattr(editor, "_api", None) is not None:
                 editor._api = QsciAPIs(editor.py_lexer)
+                editor.auto_completer.api = editor._api
 
         # BUGFIX (phantom strings after theme switches): setLexer() does NOT
         # reliably restyle the whole document - old style bytes from the
@@ -1523,7 +1564,8 @@ class MainWindow(QMainWindow):
         with open(path, "rb") as f:
             return b"\0" in f.read(1024)
 
-    def set_new_tab(self, path: Path, is_new_file=False, target_group=None):
+    def set_new_tab(self, path: Path, is_new_file=False, target_group=None,
+                    is_python_file=None):
         path = Path(path) if path is not None else None
         if is_new_file:
             return self.new_file(target_group=target_group)
@@ -1543,7 +1585,7 @@ class MainWindow(QMainWindow):
         # IMPORTANT:
         # Do not select PythonEditor/MarkdownEditor here based on the global python_editor_active flag.
         # Existing files must be selected from their own extensions, not from whichever editor mode was last active.
-        editor = self.get_editor(path=path)
+        editor = self.get_editor(path=path, is_python_file=is_python_file)
             
         if isinstance(editor, PythonEditor):
             self.outline_tree.update_outline(editor.text())
@@ -1551,12 +1593,8 @@ class MainWindow(QMainWindow):
             self.outline_tree.clear()        
 
         try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            text = path.read_text(
-                encoding="utf-8",
-                errors="replace",
-            )
+            raw = path.read_bytes()
+            text = raw.decode("utf-8-sig", errors="replace")
         except OSError as error:
             QMessageBox.critical(
                 self,
@@ -1565,6 +1603,18 @@ class MainWindow(QMainWindow):
             )
             editor.deleteLater()
             return None
+
+        # QScintilla normalizes its internal text, so retain the dominant
+        # on-disk newline convention for subsequent saves.
+        crlf_count = raw.count(b"\r\n")
+        lf_count = raw.count(b"\n") - crlf_count
+        cr_count = raw.count(b"\r") - crlf_count
+        if crlf_count >= max(lf_count, cr_count) and crlf_count:
+            editor.setEolMode(QsciScintilla.EolWindows)
+        elif cr_count > max(crlf_count, lf_count):
+            editor.setEolMode(QsciScintilla.EolMac)
+        else:
+            editor.setEolMode(QsciScintilla.EolUnix)
 
         editor.setTextSafely(text)
         self._connect_editor(editor)
@@ -1647,7 +1697,7 @@ class MainWindow(QMainWindow):
         side_bar_layout.addWidget(search_label)
         self.side_bar.setLayout(side_bar_layout)
         
-        outline_label = self.get_sidebar_label("icons/code.png", "outline")
+        outline_label = self.get_sidebar_label(resource_path("icons/code.png"), "outline")
         self.sidebar_labels["outline"] = outline_label
         side_bar_layout.addWidget(outline_label)        
         
@@ -1705,7 +1755,7 @@ class MainWindow(QMainWindow):
         self.search_checkbox.setStyleSheet("color: white; margin-bottom: 10px;")
 
         self.search_worker = SearchWorker()
-        self.search_worker.finished.connect(self.search_finished)
+        self.search_worker.results_ready.connect(self.search_finished)
 
         search_input.textChanged.connect(
             lambda text: self.search_worker.update(
@@ -1870,7 +1920,9 @@ class MainWindow(QMainWindow):
     def set_cursor_arrow(self, e):
         self.setCursor(Qt.ArrowCursor)
 
-    def search_finished(self, items):
+    def search_finished(self, generation, items):
+        if generation != self.search_worker.generation:
+            return
         self.search_list_view.clear()
         for i in items:
             self.search_list_view.addItem(i)
@@ -1954,6 +2006,14 @@ class MainWindow(QMainWindow):
 
             editor.path = updated_path
             editor.full_path = updated_path.absolute()
+            if isinstance(editor, PythonEditor):
+                if editor.ruff_lsp is not None:
+                    editor.ruff_lsp.relocate(updated_path)
+                editor.auto_completer.file_path = str(editor.full_path)
+
+            desired_class = PythonEditor if updated_path.suffix.lower() == ".py" else MarkdownEditor
+            if not isinstance(editor, desired_class):
+                editor = self._convert_editor(editor, desired_class)
 
             is_dirty = editor in self._dirty_editors
             title = updated_path.name
@@ -1979,13 +2039,12 @@ class MainWindow(QMainWindow):
 
         affected_editors = []
 
+        target_path = target_path.resolve()
         for editor in self.tab_view.all_editors():
             editor_path = getattr(editor, "path", None)
-
-            if editor_path == Path(editor_path):
+            if editor_path is None:
                 continue
-
-            editor_path = Path(editor_path)
+            editor_path = Path(editor_path).resolve()
 
             if is_directory:
                 is_affected = editor_path == target_path or target_path in editor_path.parents
@@ -2011,7 +2070,10 @@ class MainWindow(QMainWindow):
         icon_map = {
             "folder": (resource_path("icons/folder.png"), resource_path("icons/folder-active.png")),
             "search": (resource_path("icons/search.png"), resource_path("icons/search-active.png")),
-            "outline": ("icons/code.png", "icons/code-active.png"),
+            "outline": (
+                resource_path("icons/code.png"),
+                resource_path("icons/code-active.png"),
+            ),
         }
         # Reset all sidebar icons to inactive gray
         for name, (inactive, active) in icon_map.items():
@@ -2089,6 +2151,91 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Opened {new_folder}", 2000)
         self.file_manager.check_git_status()
 
+    def _run_ruff_before_save(self, path: Path, text: str) -> str:
+        """Apply Ruff safe fixes and formatting to a temporary Python file."""
+        if self.ruff_save_mode != "safe_format" or path.suffix.lower() != ".py":
+            return text
+
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=path.parent,
+                prefix=f".{path.stem}.", suffix=path.suffix, delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(text)
+
+            commands = (
+                [self.python_runner.interpreter, "-m", "ruff", "check", "--fix", str(temporary)],
+                [self.python_runner.interpreter, "-m", "ruff", "format", str(temporary)],
+            )
+            for index, command in enumerate(commands):
+                result = subprocess.run(
+                    command, cwd=str(path.parent), capture_output=True,
+                    text=True, timeout=20, check=False,
+                )
+                allowed = {0, 1} if index == 0 else {0}
+                if result.returncode not in allowed:
+                    message = result.stderr.strip() or result.stdout.strip() or "Ruff failed"
+                    raise RuntimeError(message)
+            return temporary.read_text(encoding="utf-8")
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+    @staticmethod
+    def _encode_editor_text(editor, text: str) -> bytes:
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        if editor.eolMode() == QsciScintilla.EolWindows:
+            normalized = normalized.replace("\n", "\r\n")
+        elif editor.eolMode() == QsciScintilla.EolMac:
+            normalized = normalized.replace("\n", "\r")
+        return normalized.encode("utf-8")
+
+    def _save_editor_to_path(self, editor, path: Path) -> bool:
+        """Format when requested, then atomically persist one editor."""
+        path = Path(path)
+        original = editor.text()
+        formatted = original
+        try:
+            formatted = self._run_ruff_before_save(path, original)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+            reply = QMessageBox.warning(
+                self, "Ruff on save",
+                f"Ruff could not process this file:\n{error}\n\nSave without Ruff?",
+                QMessageBox.Save | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply != QMessageBox.Save:
+                return False
+
+        temporary = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = self._encode_editor_text(editor, formatted)
+            with tempfile.NamedTemporaryFile(
+                dir=path.parent, prefix=f".{path.name}.", delete=False
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if path.exists():
+                os.chmod(temporary, path.stat().st_mode)
+            os.replace(temporary, path)
+            temporary = None
+        except OSError as error:
+            QMessageBox.critical(self, "Save File", f"Could not save '{path}':\n{error}")
+            return False
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+        if formatted != original:
+            editor.setTextSafely(formatted)
+        self.mark_editor_clean(editor)
+        return True
+
     def save_file(self):
         """
         Save the currently focused editor.
@@ -2108,14 +2255,10 @@ class MainWindow(QMainWindow):
             return self.save_as()
 
         path = Path(path)
-        try:
-            path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
-        except OSError as error:
-            QMessageBox.critical(self, "Save File", f"Could not save '{path}':\n{error}")
+        if not self._save_editor_to_path(editor, path):
             return False
 
         self.current_file = path
-        self.mark_editor_clean(editor)
         self.statusBar().showMessage(f"Saved {path.name}", 3000)
         self.cat.add_xp(1)
         self.cat.set_state("stretch", 2500)
@@ -2141,18 +2284,15 @@ class MainWindow(QMainWindow):
             return False
 
         path = Path(file_path)
-        try:
-            path.write_bytes(editor.text().replace("\r\n", "\n").encode("utf-8"))
-        except OSError as error:
-            QMessageBox.critical(
-                self,
-                "Save File",
-                f"Could not save {path}:\n{error}",
-            )
+        if not self._save_editor_to_path(editor, path):
             return False
 
         editor.path = path
         editor.full_path = path.absolute()
+        if isinstance(editor, PythonEditor):
+            if editor.ruff_lsp is not None:
+                editor.ruff_lsp.relocate(path)
+            editor.auto_completer.file_path = str(editor.full_path)
         self.current_file = path
 
         self.tab_view.set_editor_tooltip(
@@ -2161,6 +2301,10 @@ class MainWindow(QMainWindow):
         )
 
         self.mark_editor_clean(editor)
+
+        desired_class = PythonEditor if path.suffix.lower() == ".py" else MarkdownEditor
+        if not isinstance(editor, desired_class):
+            editor = self._convert_editor(editor, desired_class)
         self._add_to_recent_files(str(path))
 
         self.statusBar().showMessage(
@@ -2288,7 +2432,9 @@ class MainWindow(QMainWindow):
         self.preview.page().runJavaScript(js)
 
     def _convert_current_tab(self, EditorClass):
-        old = self.current_editor()
+        return self._convert_editor(self.current_editor(), EditorClass)
+
+    def _convert_editor(self, old, EditorClass):
         if old is None:
             return None
         if isinstance(old, EditorClass):
@@ -2300,6 +2446,8 @@ class MainWindow(QMainWindow):
             return None
 
         index = group.indexOf(old)
+        was_current = old is self.current_editor()
+        previous_current = group.currentWidget()
         title = group.tabText(index)
         tooltip = group.tabToolTip(index)
         icon = group.tabIcon(index)
@@ -2307,8 +2455,13 @@ class MainWindow(QMainWindow):
         text = old.text()
         path = getattr(old, "path", None)
         was_dirty = old in self._dirty_editors
+        line, column = old.getCursorPosition()
+        selection = old.getSelection()
+        first_visible = old.firstVisibleLine()
 
-        new_editor = EditorClass(path=path)
+        new_editor = self.get_editor(
+            path=path, is_python_file=(EditorClass is PythonEditor)
+        )
         new_editor.setTextSafely(text)
         self._connect_editor(new_editor)
 
@@ -2316,7 +2469,10 @@ class MainWindow(QMainWindow):
         group.removeTab(index)
         group.insertTab(index, new_editor, icon, title)
         group.setTabToolTip(index, tooltip)
-        group.setCurrentIndex(index)
+        if was_current:
+            group.setCurrentIndex(index)
+        elif previous_current is not None and previous_current is not old:
+            group.setCurrentWidget(previous_current)
         group.blockSignals(False)
 
         if was_dirty:
@@ -2329,8 +2485,13 @@ class MainWindow(QMainWindow):
         old.setParent(None)
         old.deleteLater()
 
-        new_editor.setFocus()
-        self.tab_view.focus_editor(new_editor)
+        new_editor.setCursorPosition(line, column)
+        if selection[0] >= 0:
+            new_editor.setSelection(*selection)
+        new_editor.setFirstVisibleLine(first_visible)
+        if was_current:
+            new_editor.setFocus()
+            self.tab_view.focus_editor(new_editor)
         return new_editor
 
     def _swap_editor(self, EditorClass):
@@ -2383,6 +2544,15 @@ class MainWindow(QMainWindow):
             return
 
         line, index = editor.getCursorPosition()
+        if editor.hasSelectedText():
+            line, index, _line_to, _index_to = editor.getSelection()
+        if index > 0:
+            index -= 1
+        elif line > 0:
+            line -= 1
+            index = max(0, editor.lineLength(line) - 1)
+        else:
+            line, index = -1, -1
 
         editor.findFirst(
             text,
@@ -2391,8 +2561,8 @@ class MainWindow(QMainWindow):
             whole_word,
             True,    # wrap around
             False,   # search BACKWARD
-            line - 1,
-            index - 1,
+            line,
+            index,
             True,    # show the match
             False
         )
@@ -2402,8 +2572,16 @@ class MainWindow(QMainWindow):
         editor = self.current_editor()
         if editor is None:
             return
-        # If there's a selection and it matches the search text, replace it
-        if editor.hasSelectedText():
+        selected = editor.selectedText() if editor.hasSelectedText() else ""
+        flags = 0 if case_sensitive else re.IGNORECASE
+        pattern = find_text if regex else re.escape(find_text)
+        if whole_word:
+            pattern = rf"\b(?:{pattern})\b"
+        try:
+            matches = bool(selected) and re.fullmatch(pattern, selected, flags) is not None
+        except re.error:
+            matches = False
+        if matches:
             editor.replace(replace_text)
             # replace() swaps the currently selected Tect with replace_text
             # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a
@@ -2415,6 +2593,15 @@ class MainWindow(QMainWindow):
         editor = self.current_editor()
         if editor is None:
             return
+        if regex:
+            try:
+                if re.compile(find_text).match("") is not None:
+                    self.statusBar().showMessage(
+                        "Zero-length regex cannot be replaced", 4000
+                    )
+                    return
+            except re.error:
+                return
 
         # Move cursor to the start of the Document
         # sendScintilla sends a raw Scintilla message
@@ -2445,9 +2632,29 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         for editor in list(self.tab_view.all_editors()):
-            if isinstance(editor, PythonEditor):
-                editor.shutdown()
+            if editor not in self._dirty_editors:
+                continue
+            self.tab_view.focus_editor(editor)
+            path = getattr(editor, "path", None)
+            name = Path(path).name if path is not None else "Untitled"
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                f"Save Changes to '{name}'?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Cancel:
+                event.ignore()
                 return
+            if reply == QMessageBox.Save and not self.save_file():
+                event.ignore()
+                return
+
+        self.save_session()
+        for editor in list(self.tab_view.all_editors()):
+            if hasattr(editor, "shutdown"):
+                editor.shutdown()
         if hasattr(self, "terminal"):
             self.terminal.stop()
         if hasattr(self, "python_runner") and self.python_runner:
@@ -2464,6 +2671,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "settings"):
             self.settings.setValue("recent_files", self.recent_files)
         self.ruff_lsp_client.shutdown()
+        event.accept()
         super().closeEvent(event)
         
         
@@ -2496,7 +2704,7 @@ class MainWindow(QMainWindow):
         # group() returns the life QTabWidgets in left-to-right order;
         # its index for an editor's group is exactly the number we save.
         groups = list(self.tab_view.groups())
-        tabs= []
+        tabs = []
         
         for editor in self.tab_view.all_editors():
             path = getattr(editor, "path", None)
@@ -2510,14 +2718,14 @@ class MainWindow(QMainWindow):
                 "group": groups.index(group) if group in groups else 0,
                 })
             
-            active = self.current_editor()
-            active_path = getattr(active, "path", None)
-            session = {
-                "tabs": tabs,
-                "active": str(active_path) if active_path is not None else None,
-                "python_mode": self.python_editor_active,
-                }
-            self.settings.setValue("session", json.dumps(session))
+        active = self.current_editor()
+        active_path = getattr(active, "path", None)
+        session = {
+            "tabs": tabs,
+            "active": str(active_path) if active_path is not None else None,
+            "python_mode": bool(self.python_editor_active),
+        }
+        self.settings.setValue("session", json.dumps(session))
             
     def _restore_session(self):
         """
@@ -2549,6 +2757,15 @@ class MainWindow(QMainWindow):
             return
         
         tabs = session.get("tabs", [])
+        if not isinstance(tabs, list) or len(tabs) > 100:
+            return
+        tabs = [entry for entry in tabs if (
+            isinstance(entry, dict)
+            and isinstance(entry.get("path"), str)
+            and isinstance(entry.get("python", False), bool)
+            and isinstance(entry.get("group", 0), int)
+            and 0 <= entry.get("group", 0) < 20
+        )]
         if not tabs:
             return
         
@@ -2571,8 +2788,11 @@ class MainWindow(QMainWindow):
             
             # set_new_tab() branches on self.python_editor_active to choose PythonEditor vs MarkdownEditor.
             # Setting it per file restores each tab in the mode it was last edited with.
-            self.python_editor_active = entry["python"]
-            editor = self.set_new_tab(path, target_group=groups[entry["group"]])
+            editor = self.set_new_tab(
+                path,
+                target_group=groups[entry["group"]],
+                is_python_file=entry["python"],
+            )
             if editor is not None and session.get("active") == str(path):
                 active_editor = editor
             
@@ -2596,9 +2816,7 @@ class MainWindow(QMainWindow):
         import threading
         import urllib.request
 
-        # The GitHub API endpoint for your latest release
-        # Replace YOUR_USERNAME and MarkdownEditor with your actual values
-        api_url = "https://api.github.com/repos/YOUR_USERNAME/MarkdownEditor/releases/latest"
+        api_url = "https://api.github.com/repos/ConfidentCupcake/MarkdownEditor/releases/latest"
 
         def _check():
             try:
@@ -2613,26 +2831,29 @@ class MainWindow(QMainWindow):
                 with urllib.request.urlopen(req, timeout=5) as response:
                     data = json.loads(response.read().decode("utf-8"))
 
-                # Extract the version tag (e.g. "v1.1.0")
-                latest_version = data.get("tag_name", "")
-                # Remove the "v" prefix if present: "v1.1.0" → "1.1.0"
-                if latest_version.startswith("v"):
-                    latest_version = latest_version[1:]
-
-                # Extract the download URL for the first asset
-                assets = data.get("assets", [])
-                download_url = assets[0]["browser_download_url"] if assets else ""
-
-                # Compare versions
-                if latest_version and latest_version != APP_VERSION:
-                    # Newer version available — show dialog on the main thread
-                    # QTimer.singleShot(0, callback) runs the callback on the
-                    # main Qt event loop thread. This is important because
-                    # you can't create QDialogs from a background thread.
-                    # Docs: https://doc.qt.io/qt-5/qtimer.html#singleShot
-                    QTimer.singleShot(
-                        0, lambda: self._show_update_dialog(latest_version, download_url)
-                    )
+                from packaging.version import InvalidVersion, Version
+                latest_tag = data.get("tag_name", "")
+                try:
+                    latest = Version(latest_tag.removeprefix("v"))
+                    current = Version(APP_VERSION.removeprefix("v"))
+                except InvalidVersion:
+                    return
+                if latest <= current:
+                    return
+                assets = data.get("assets") or []
+                if sys.platform == "win32":
+                    suffixes = (".exe", ".msi")
+                elif sys.platform == "darwin":
+                    suffixes = (".dmg", ".pkg", ".zip")
+                else:
+                    suffixes = (".appimage", ".deb", ".rpm", ".tar.gz")
+                download_url = next(
+                    (asset.get("browser_download_url", "") for asset in assets
+                     if asset.get("name", "").lower().endswith(suffixes)),
+                    data.get("html_url", ""),
+                )
+                if download_url:
+                    self.update_available.emit(str(latest), download_url)
 
             except Exception:
                 # Network error, timeout, or API rate limit — fail silently

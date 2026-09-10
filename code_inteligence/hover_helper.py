@@ -1,79 +1,76 @@
 from PyQt5.QtCore import QThread, pyqtSignal
 from jedi import Script
-# This is just for testing
+
+
 class HoverHelper(QThread):
-    """
-    Background thread that retrieves hover information for
-    the symbol at a given position using Jedi.
-    """
-    hover_info_ready = pyqtSignal(str)
-    hover_info_empty = pyqtSignal()
-    
+    """Run Jedi hover lookups while always replaying the newest request."""
+
+    hover_info_ready = pyqtSignal(int, str)
+    hover_info_empty = pyqtSignal(int)
+
     def __init__(self):
         super().__init__(None)
-        self.code = ""
-        self.file_path = None
-        self.line = 1
-        self.column = 0
+        self._generation = 0
+        self._request = None
+        self._pending = None
         self._shutting_down = False
-        
+        self.finished.connect(self._start_pending)
+
     def get_hover(self, line: int, column: int, code: str, file_path: str = None):
-        """Starts the hover lookup. Jedi uses 1-based line numbers."""
-        if self.isRunning():
+        if self._shutting_down:
             return
-        self.line = line
-        self.column = column
-        self.code = code
-        self.file_path = file_path
+        self._generation += 1
+        request = (self._generation, line, column, code, file_path)
+        if self.isRunning():
+            self._pending = request
+            return
+        self._request = request
         self.start()
-        
+
+    def invalidate(self):
+        self._generation += 1
+        self._pending = None
+
+    def _start_pending(self):
+        if self._shutting_down or self._pending is None:
+            return
+        self._request, self._pending = self._pending, None
+        self.start()
+
     def run(self):
+        generation, line, column, code, file_path = self._request
         try:
-            script = Script(code=self.code, path=self.file_path)
-            
-            # help() returns Name objects for the symbol at the position
-            help_results = script.help(line = self.line, column = self.column)
-            
+            results = Script(code=code, path=file_path).help(line=line, column=column)
             if self._shutting_down:
-                return None
-                
-            if help_results:
-                name = help_results[0]
-                parts = []
-            
-                if name.name:
-                    parts.append(name.name)
-                    
-                if name.type:
-                    parts.append(f"({name.type})")
-                
-                # Jedi 0.20+: use docstring(), older: use docstring_raw()
-                docstring = ""
-                try:
-                    docstring = name.docstring()
-                except(AttributeError, TypeError):
-                    try:
-                        docstring = name.docstring_raw()
-                    except(AttributeError, TypeError):
-                        pass
-                
-                if docstring:
-                    parts.append("\n" + docstring)
-                    
-                if len(parts) > 0:
-                    self.hover_info_ready.emit("\n".join(parts))
-                else:
-                    self.hover_info_empty.emit()
+                return
+            if not results:
+                self.hover_info_empty.emit(generation)
+                return
+            name = results[0]
+            parts = [name.name] if name.name else []
+            if name.type:
+                parts.append(f"({name.type})")
+            try:
+                docstring = name.docstring()
+            except (AttributeError, TypeError):
+                docstring = name.docstring_raw()
+            if docstring:
+                parts.append("\n" + docstring)
+            if parts:
+                self.hover_info_ready.emit(generation, "\n".join(parts))
             else:
-                self.hover_info_empty.emit()
-        except Exception as e:
+                self.hover_info_empty.emit(generation)
+        except Exception:
             if not self._shutting_down:
-                print(f"HoverHelper error: {e}")
-                self.hover_info_empty.emit()
-                
+                self.hover_info_empty.emit(generation)
+
+    @property
+    def generation(self):
+        return self._generation
+
     def shutdown(self):
         self._shutting_down = True
+        self._pending = None
         self.requestInterruption()
         if self.isRunning():
-            self.wait()
-                
+            self.wait(2000)

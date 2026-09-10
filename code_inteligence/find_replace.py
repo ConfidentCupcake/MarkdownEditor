@@ -4,7 +4,6 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QPushButton, QCheckBox, QLabel, QShortcut
 )
-from PyQt5.Qsci import QsciScintilla
 
 
 class FindReplaceBar(QWidget):
@@ -191,11 +190,11 @@ class FindReplaceBar(QWidget):
         # Enter in find input -> find next
         # returnPressed is a built-in QLineEdit signal
         # Docs: https://doc.qt.io/qt-5/qlineedit.html#returnPressed
-        next_find = QShortcut(QKeySequence(Qt.Key.Key_Down), self.find_input)
-        next_find.activated.connect(self._on_find_next)
+        self.find_input.returnPressed.connect(self._on_find_next)
 
         # Shift+Enter → find previous
-        prev_find = QShortcut(QKeySequence(Qt.Key.Key_Up), self.find_input)
+        prev_find = QShortcut(QKeySequence("Shift+Return"), self.find_input)
+        prev_find.setContext(Qt.WidgetShortcut)
         prev_find.activated.connect(self._on_find_prev)
 
         # Escape → close

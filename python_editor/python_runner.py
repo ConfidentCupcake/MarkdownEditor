@@ -2,37 +2,44 @@ import sys
 from pathlib import Path
 import shlex
 
-from PyQt5.QtCore import QObject, QProcess, QProcessEnvironment, pyqtSignal
+from PyQt5.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, pyqtSignal
 
 class PythonRunner(QObject):
     output_ready = pyqtSignal(str)
     error_ready = pyqtSignal(str)
     process_finished = pyqtSignal(int)
     state_changed = pyqtSignal(str)
-    process_started = pyqtSignal()          # emitted right after QProcess.start()
-    process_finished = pyqtSignal(int)      # emitted witht the exit code
+    process_started = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.process = QProcess(self)
         self.interpreter = sys.executable # gives the path to the Python interpreter currently running the app.
+        self._pending_start = None
 
         self.process.readyReadStandardOutput.connect(self._read_stdout) # New data arrives on stdout
         self.process.readyReadStandardError.connect(self._read_stderr) # New data arrives on stderr
         self.process.finished.connect(self._on_finished) # The subprocess exists
         self.process.stateChanged.connect(self._on_stage_changed) # Running/Stopped transition
+        self.process.started.connect(self.process_started.emit)
+        self.process.errorOccurred.connect(
+            lambda _error: self.error_ready.emit(self.process.errorString() + "\n")
+        )
+
+    def _start(self, arguments, cwd: Path, env: QProcessEnvironment):
+        request = (arguments, str(cwd), env)
+        if self.is_running():
+            self._pending_start = request
+            self.stop()
+            return
+        self.process.setProcessEnvironment(env)
+        self.process.setWorkingDirectory(str(cwd))
+        self.process.start(self.interpreter, arguments)
         
     def run_file(self, path: Path, cwd: Path = None):
         """Run a .py file with unbuffered output."""
-        if self.is_running(): # if a previous script is still running, kill it first
-            self.stop()
-            
-        env = self._build_env(cwd or path.parent) # Build the environment
-        
-        self.process.setProcessEnvironment(env)  # Apply the custom environment to the subprocess
-        self.process.setWorkingDirectory(str(cwd or path.parent)) # Set the working environment. If the working environment is C:\projects\myapp\main.py -> the working directory is C:\projects\myapp.
-        self.process.start(self.interpreter, ["-u", str(path)]) # Takes the programm and a list of arguments = "C:\Python311\python.exe" -u "C:\projects\myapp\main.py"
-        self.process_started.emit()
+        work_dir = cwd or path.parent
+        self._start(["-u", str(path)], work_dir, self._build_env(work_dir))
         
         
     def _build_env(self, project_root: Path) -> QProcessEnvironment:
@@ -50,17 +57,8 @@ class PythonRunner(QObject):
         
     def run_code(self, code: str, cwd: Path = None):
         """Run a code string via python -u -c 'code'."""
-        if self.is_running():
-            self.stop()
-        
-        work_dir = str(cwd or Path.cwd())
-        env = self._build_env(Path(work_dir))
-        
-        # Same as run_file but uses the -c flag. This runs a code string directly of a file.
-        self.process.setProcessEnvironment(env)
-        self.process.setWorkingDirectory(work_dir)
-        self.process.start(self.interpreter, ["-u", "-c", code])
-        self.process_started.emit()
+        work_dir = cwd or Path.cwd()
+        self._start(["-u", "-c", code], work_dir, self._build_env(work_dir))
         
     def send_input(self, text: str):
         """Send user input to the running process's stdin."""
@@ -68,10 +66,14 @@ class PythonRunner(QObject):
             self.process.write((text + "\n").encode("utf-8"))
             
     def stop(self):
-        """Kill the running process."""
+        """Stop the process without blocking the GUI event loop."""
         if self.process.state() != QProcess.NotRunning:
-            self.process.kill()
-            self.process.waitForFinished(2000)
+            self.process.terminate()
+            QTimer.singleShot(
+                2000,
+                lambda: self.process.kill()
+                if self.process.state() != QProcess.NotRunning else None,
+            )
             
     def _read_stdout(self):
         data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
@@ -83,6 +85,12 @@ class PythonRunner(QObject):
         
     def _on_finished(self, exit_code, _exit_status):
         self.process_finished.emit(exit_code)
+        if self._pending_start is not None:
+            arguments, cwd, env = self._pending_start
+            self._pending_start = None
+            self.process.setProcessEnvironment(env)
+            self.process.setWorkingDirectory(cwd)
+            self.process.start(self.interpreter, arguments)
     
     def _on_stage_changed(self, state):
         if state == QProcess.NotRunning:
@@ -111,21 +119,15 @@ class PythonRunner(QObject):
         """
         import shlex
 
-        if self.is_running():
-            self.stop()
-
-        env = self._build_env(cwd or path.parent)
-
-        self.process.setProcessEnvironment(env)
-        self.process.setWorkingDirectory(str(cwd or path.parent))
+        work_dir = cwd or path.parent
+        env = self._build_env(work_dir)
         # Build the argument list: ["-u", "script.py", "--verbose", "--output", "result.txt"]
         # shlex.split parses the args stings the same way a shell would:
         # '--output "my file.txt"' → ["--output", "my file.txt"]
         # (preserves quoted strings with spaces)
         # Docs: https://docs.python.org/3/library/shlex.html#shlex.split
-        arg_list = ["-u", str(path)] + shlex.split(args)
-        self.process.start(self.interpreter, arg_list)
-        self.process_started.emit()
+        arg_list = ["-u", str(path)] + shlex.split(args, posix=sys.platform != "win32")
+        self._start(arg_list, work_dir, env)
     
     def run_pip(self, args: str):
         """
@@ -140,15 +142,13 @@ class PythonRunner(QObject):
         because pip.exe might not be on the PATH, but 'python -m pip'
         always works as long as the interpreter has pip installed.
         """
-        if self.is_running():
-            self.stop()
-        
         import os
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
         env.insert("PYTHONIOENCODING", "utf-8")
         
-        self.process.setProcessEnvironment(env)
-        self.process.setWorkingDirectory(os.path.expanduser("~"))
-        
-        self.process.start(self.interpreter, ["-m", "pip"] + shlex.split(args))
+        self._start(
+            ["-m", "pip"] + shlex.split(args, posix=sys.platform != "win32"),
+            Path(os.path.expanduser("~")),
+            env,
+        )

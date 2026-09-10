@@ -34,6 +34,7 @@ Design rules honored here (learned the hard way in this project):
 
 import os
 import sys
+from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer, QSettings, pyqtSignal
 from PyQt5.QtGui import QFont, QPainter, QPixmap, QColor
@@ -48,9 +49,9 @@ def _resource_path(relative_path):
     :return: absolute path that works both in source runs and in a
              frozen (--onefile) build
     """
-    if hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
+    root = (Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS")
+            else Path(__file__).resolve().parent.parent)
+    return str(root / relative_path)
 
 
 # --------------------------------------------------------------------- #

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 from PyQt5.QtCore import QObject, QTimer
 from PyQt5.QtWidgets import QToolTip
@@ -17,9 +18,10 @@ class RuffLspController(QObject):
         # Parent this controller to the editor unless a different explicit parent was supplied.
         # Destroying the tab then also destroys its controller.
         super().__init__(parent or editor)
-        
+
         self.editor = editor
         self.client = client
+        self._uri = self._uri_for_path(editor.full_path)
         
         # Reuse the existing visual layer. It remains responsible only for QScintilla
         # indicators, marker circles, tooltips and range caching.
@@ -45,6 +47,7 @@ class RuffLspController(QObject):
         # If Ruff is still starting when this tab is constructed, open_document
         # wil run as soon as initialize/initialized completes.
         client.server_ready.connect(self.open_document)
+        client.server_stopped.connect(self._on_server_stopped)
 
         client.diagnostics_published.connect(self._on_diagnostics_published)
         if client.is_ready:
@@ -53,15 +56,42 @@ class RuffLspController(QObject):
     @property
     def uri(self) -> str:
         """Return the stable LSP URI identifying this document to Ruff."""
-        path = self.editor.full_path
-        
+        return self._uri
+
+    @staticmethod
+    def _uri_for_path(path) -> str:
         if path is None:
-            # Base implementation for an untitled Python buffer. It does not
-            # write a file; document content is sent with didOpen/didChange.
-            # A later enhancement should generte a unique URI per untitled tab.
-            path = Path.cwd() / "untitled.py"
-            
+            path = Path.cwd() / f"untitled-{uuid4().hex}.py"
         return Path(path).resolve().as_uri()
+
+    def _on_server_stopped(self):
+        self._opened = False
+
+    def relocate(self, path):
+        """Migrate this open buffer to a new URI after Save As or rename."""
+        old_uri = self._uri
+        if self._opened and self.client.is_ready:
+            self.client.close_document(old_uri)
+        self._uri = self._uri_for_path(path)
+        self._opened = False
+        self.document_version += 1
+        self.open_document()
+
+    def set_client(self, client):
+        """Reconnect this document when the selected Ruff interpreter changes."""
+        try:
+            self.client.server_ready.disconnect(self.open_document)
+            self.client.server_stopped.disconnect(self._on_server_stopped)
+            self.client.diagnostics_published.disconnect(self._on_diagnostics_published)
+        except TypeError:
+            pass
+        self.client = client
+        self._opened = False
+        client.server_ready.connect(self.open_document)
+        client.server_stopped.connect(self._on_server_stopped)
+        client.diagnostics_published.connect(self._on_diagnostics_published)
+        if client.is_ready:
+            self.open_document()
         
     def open_document(self):
         """Send didOpen once after the shared server is ready."""
@@ -264,19 +294,14 @@ class RuffLspController(QObject):
         if self._opened:
             self.client.close_document(self.uri)
 
+        try:
+            self.client.server_ready.disconnect(self.open_document)
+            self.client.server_stopped.disconnect(self._on_server_stopped)
+            self.client.diagnostics_published.disconnect(self._on_diagnostics_published)
+        except TypeError:
+            pass
+
         self.view.clear()
-    
-    
-    
-    
-    
-    
-    
-    
-    
-        
-        
-        
-        
+
         
         

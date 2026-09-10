@@ -12,6 +12,8 @@ original color from theme.json -> so a palette only needs to name what it actual
 import json
 from pathlib import Path
 
+THEMES_DIR = Path(__file__).resolve().parent
+
 PALETTES = {
     "sunset": {
         "paper": "#241a1c",
@@ -67,7 +69,7 @@ PALETTES = {
     },
 }
 
-def make_theme(name: str, palette: dict, src: str = "themes/theme.json"):
+def make_theme(name: str, palette: dict, src=None):
     """
     Recolor theme.json with 'palette' and write themes/<name>.json.
 
@@ -80,7 +82,9 @@ def make_theme(name: str, palette: dict, src: str = "themes/theme.json"):
     :param palette: {style_name: hex color}; "paper" is the background
     :param src: source theme to inherit everything else from
     """
-    theme = json.loads(Path(src).read_text(encoding="utf-8"))
+    source = Path(src) if src is not None else THEMES_DIR / "theme.json"
+    theme = json.loads(source.read_text(encoding="utf-8"))
+    theme["theme"]["name"] = name
 
     # --- syntax colors ------------------------------------------------- #
     for entry in theme["theme"]["syntax"]:
@@ -104,7 +108,9 @@ def make_theme(name: str, palette: dict, src: str = "themes/theme.json"):
                                     # source theme (theme = single source
                                     # of truth for fonts)
 
-    out = Path("themes") / f"{name}.json"
+    # Match the repository's existing underscore naming convention so the
+    # generator updates variants instead of creating duplicate themes.
+    out = THEMES_DIR / f"{name}_.json"
     out.write_text(json.dumps(theme, indent=2), encoding="utf-8")
     print(f"wrote {out}")
     

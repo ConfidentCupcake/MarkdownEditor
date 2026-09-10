@@ -15,13 +15,14 @@ Coordinate note (the lesson from the signature-tooltip fix):
 """
 import os
 import sys
+from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer, QPoint
 from PyQt5.QtGui import QCursor, QPixmap
 from PyQt5.QtWidgets import QLabel, QApplication
 
 DISPLAY_SIZE = 64
-IDLE_MS = 10 * 1000      # 30 s of nothing -> cat wakes up
+IDLE_MS = 30 * 1000      # 30 s of nothing -> cat wakes up
 STEP_PX = 6              # px per 80 ms tick -> calm stroll, not a dash
 
 ASCII_WALK = [" =( o.o )>", "<( o.o )= "]   # ASCII; swap for PNGs later
@@ -29,9 +30,9 @@ ASCII_NAP = " ( -w- ) zzz"
 
 def _resource_path(relative_path):
     """PyInstaller-safe path helper (same contract as main.py's)."""
-    if hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
+    root = (Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS")
+            else Path(__file__).resolve().parent.parent)
+    return str(root / relative_path)
 
 
 class NekoChaser(QLabel):
@@ -173,4 +174,4 @@ class NekoChaser(QLabel):
             self._show_sheet_frame(self._sleep_sheet, self._sleep_n,
                                    self._frame)
         else:
-            self.setText(ASCII_NAP)    
+            self.setText(ASCII_NAP)

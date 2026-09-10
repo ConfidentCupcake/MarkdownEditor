@@ -174,7 +174,10 @@ class MarkdownCustomLexer(NeutronLexer):
         """Return (fence_char, fence_len) if the line opens a code fence,
         otherwise (None, 0). A fence line begins (after indentation) with 3+
         identical backticks or tildes."""
-        stripped = line.lstrip(" \t")
+        indent = len(line) - len(line.lstrip(" "))
+        if indent > 3 or (line.startswith("\t") and not line.startswith("   ")):
+            return None, 0
+        stripped = line[indent:]
         if not stripped:
             return None, 0
         c = stripped[0]
@@ -193,18 +196,11 @@ class MarkdownCustomLexer(NeutronLexer):
     def _is_closing_fence(self, line: str, fence_char: str, fence_len: int) -> bool:
         """True if `line` closes the currently open fence: same char, at least
         as many, and only whitespace afterwards."""
-        stripped = line.lstrip(" \t")
-        if not stripped or stripped[0] != fence_char:
+        char, count = self._fence_line(line)
+        if char != fence_char or count < fence_len:
             return False
-        n = 0
-        for ch in stripped:
-            if ch == fence_char:
-                n += 1
-            else:
-                break
-        if n < fence_len:
-            return False
-        return stripped[n:].strip() == ""
+        stripped = line.lstrip(" ")
+        return stripped[count:].strip() == ""
 
     def _state_before(self, full_text: str, start_char: int):
         """Scan full_text[:start_char] line by line to determine whether the
@@ -213,9 +209,18 @@ class MarkdownCustomLexer(NeutronLexer):
         index (already converted from Scintilla's byte offset)."""
         prefix = full_text[:start_char]
         in_fence = False
+        in_comment = False
         fence_char = None
         fence_len = 0
         for line in prefix.split("\n"):
+            if in_comment:
+                if "-->" in line:
+                    in_comment = False
+                continue
+            if not in_fence and "<!--" in line:
+                if "-->" not in line.split("<!--", 1)[1]:
+                    in_comment = True
+                continue
             c, n = self._fence_line(line)
             if c is None:
                 continue
@@ -230,7 +235,7 @@ class MarkdownCustomLexer(NeutronLexer):
                     in_fence = False
                     fence_char = None
                     fence_len = 0
-        return in_fence, fence_char, fence_len
+        return in_fence, fence_char, fence_len, in_comment
 
     # ------------------------------------------------------------------ #
     #  Block classification helpers (operate on the stripped line string)
@@ -282,7 +287,10 @@ class MarkdownCustomLexer(NeutronLexer):
 
     @staticmethod
     def _is_table_row(stripped: str) -> bool:
-        return "|" in stripped
+        unescaped = re.findall(r"(?<!\\)\|", stripped)
+        return len(unescaped) >= 2 or (
+            bool(unescaped) and stripped.startswith("|") and stripped.endswith("|")
+        )
 
     @staticmethod
     def _is_table_separator(stripped: str) -> bool:
@@ -293,7 +301,7 @@ class MarkdownCustomLexer(NeutronLexer):
 
     @staticmethod
     def _is_footnote_def(stripped: str) -> bool:
-        return bool(re.match(r"^\[\^?[^\]]+\]:", stripped))
+        return bool(re.match(r"^\[\^[^\]]+\]:", stripped))
 
     # ------------------------------------------------------------------ #
     #  styleText entry point
@@ -321,7 +329,9 @@ class MarkdownCustomLexer(NeutronLexer):
 
         # The only state that legitimately spans arbitrary restyle chunks is
         # fenced-code-block context. Everything else resets per line.
-        in_fence, fence_char, fence_len = self._state_before(full_text, start_char)
+        in_fence, fence_char, fence_len, in_comment = self._state_before(
+            full_text, start_char
+        )
 
         # If `start` lands in the middle of a line, the first segment we style is
         # only a suffix of that line. We must NOT run block detection on it (a
@@ -338,16 +348,24 @@ class MarkdownCustomLexer(NeutronLexer):
         last_idx = len(lines) - 1
         for idx, line in enumerate(lines):
             force_inline = partial_first and idx == 0
+            if in_comment:
+                self._style_plain_line(line, self.COMMENTS)
+                if "-->" in line:
+                    in_comment = False
+            elif not in_fence and "<!--" in line:
+                self._style_plain_line(line, self.COMMENTS)
+                in_comment = "-->" not in line.split("<!--", 1)[1]
+            else:
             # `line` is a Python str here; generate_token() computes UTF-8 byte
             # lengths for each token, so setStyling() stays byte-correct even
             # for multibyte content.
-            in_fence, fence_char, fence_len = self._style_line(
-                line,
-                in_fence,
-                fence_char,
-                fence_len,
-                force_inline=force_inline,
-            )
+                in_fence, fence_char, fence_len = self._style_line(
+                    line,
+                    in_fence,
+                    fence_char,
+                    fence_len,
+                    force_inline=force_inline,
+                )
             if idx != last_idx:
                 # Style the "\n" separator that split() removed.
                 self.setStyling(1, self.DEFAULT)

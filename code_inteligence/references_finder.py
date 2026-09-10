@@ -1,44 +1,64 @@
 from PyQt5.QtCore import QThread, pyqtSignal
 from jedi import Script
 
+
 class ReferencesFinder(QThread):
-    """
-    Background thread that finds all references to a symbol using Jedi.
-    
-    Signals:
-        references_found(list) -- list of (file_path, line, column, line_text) tuples
-        references_empty() -- no references found
-    """
-    references_found = pyqtSignal(list)
-    references_empty = pyqtSignal()
-    
+    """Find references without blocking, replaying only the newest request."""
+
+    references_found = pyqtSignal(int, list)
+    references_empty = pyqtSignal(int)
+    error = pyqtSignal(int, str)
+
     def __init__(self):
         super().__init__(None)
-        self.code = ""
-        self.file_path = None
-        self.line = 1
-        self.column = 0
+        self._generation = 0
+        self._request = None
+        self._pending = None
         self._shutting_down = False
-    
-    def find_references(self, line: int, column: int, code: str, file_path:str = None):
-        """Start the refernce search. Jedi uses 1-based lines."""
+        self.finished.connect(self._start_pending)
+
+    def find_references(self, line, column, code, file_path=None):
+        if self._shutting_down:
+            return None
+        self._generation += 1
+        request = (self._generation, line, column, code, file_path)
         if self.isRunning():
+            self._pending = request
+        else:
+            self._request = request
+            self.start()
+        return self._generation
+
+    def _start_pending(self):
+        if self._shutting_down or self._pending is None:
             return
-        
-        self.line = line
-        self.column = column
-        self.code = code
-        self.file_path = file_path
+        self._request, self._pending = self._pending, None
         self.start()
-        
+
     def run(self):
+        generation, line, column, code, file_path = self._request
         try:
-            script = Script(code=self.code, path=self.file_path)
-            
-            # get_references_all returns a list of Name objects
-            # Each name represents a usage of the symbol - the definition itself, imports and all call sites.
-            references = script.get_references_all(line=self.line, column=self.column)
-            
+            names = Script(code=code, path=file_path).get_references(
+                line=line, column=column, include_builtins=False
+            )
             if self._shutting_down:
-                return 
-            
+                return
+            references = [
+                (str(name.module_path), name.line - 1, name.column, name.name)
+                for name in names
+                if name.module_path is not None
+            ]
+            if references:
+                self.references_found.emit(generation, references)
+            else:
+                self.references_empty.emit(generation)
+        except Exception as exc:
+            if not self._shutting_down:
+                self.error.emit(generation, str(exc))
+
+    def shutdown(self):
+        self._shutting_down = True
+        self._pending = None
+        self.requestInterruption()
+        if self.isRunning():
+            self.wait(2000)

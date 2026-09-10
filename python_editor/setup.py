@@ -7,12 +7,14 @@
 #       Linux: lexer_fast.cpython-3xx-x86_64-inux-gnu.so
 
 
+from pathlib import Path
+
 from setuptools import setup
 from Cython.Build import cythonize
 
 setup(
     ext_modules=cythonize(
-        "python_editor\lexer_fast.pyx",
+        str(Path(__file__).with_name("lexer_fast.pyx")),
         compiler_directives={
             # boundscheck=False: disable IndexError checking oin array access
             # We manually check bounds, so thi is safe. Gives ~20% speedup.

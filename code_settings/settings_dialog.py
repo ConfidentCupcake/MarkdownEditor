@@ -126,7 +126,7 @@ def _build_pixmaps() -> dict:
              injected into SETTINGS_QSS as url() targets.
     """
     import tempfile
-    from PyQt5.QtCore import Qt, QRectF, QUrl
+    from PyQt5.QtCore import Qt, QRectF
     from PyQt5.QtGui import QPixmap, QPainter, QColor, QPen, QBrush, QPainterPath
 
     out = {}
@@ -183,8 +183,7 @@ class SettingsDialog(QDialog):
     """
     Tabbed settings dialog. Storage model (single source of truth per value):
 
-        - settings.json  -> "interpreter"
-        - QSettings      -> ruff_save_mode, tab_width, word_wrap,
+        - QSettings      -> interpreter, ruff_save_mode, tab_width, word_wrap,
                             restore_tabs, theme (active theme NAME),
                             line_numbers, highlight_line, paper_color
         - theme.json     -> font_family + font_size (written by main.py's
@@ -288,8 +287,7 @@ class SettingsDialog(QDialog):
         
         interp_row = QHBoxLayout()
         self.interpreter_input = QLineEdit()
-        # Pre-filled with tht interpreter the runner is currently using,
-        # falling back to the settings.json value.
+        # Pre-filled with the interpreter currently stored in QSettings.
         self.interpreter_input.setText(self.settings.get("interpreter", ""))
         interp_row.addWidget(self.interpreter_input)
         
@@ -349,7 +347,11 @@ class SettingsDialog(QDialog):
         # the effective color and starts from the current value).
         paper_row = QHBoxLayout()
         self.paper_btn = QPushButton()
-        self._paper_color = QColor(self.settings.get("paper_color", "#1e1f22"))
+        self._paper_override = self.settings.get("paper_color") or None
+        self._paper_color = QColor(
+            self._paper_override
+            or self.settings.get("theme_paper", "#1e1f22")
+        )
         self._refresh_paper_swatch()
         self.paper_btn.clicked.connect(self._pick_paper_color)
         paper_row.addWidget(self.paper_btn)
@@ -395,10 +397,12 @@ class SettingsDialog(QDialog):
                                       "Editor background color")
         if color.isValid():
             self._paper_color = color
+            self._paper_override = color.name()
             self._refresh_paper_swatch()
 
     def _reset_paper_color(self):
         """Drop the override: back to the theme's own paper default."""
+        self._paper_override = None
         self._paper_color = QColor(self.settings.get("theme_paper", "#1e1f22"))
         self._refresh_paper_swatch()
 
@@ -412,7 +416,7 @@ class SettingsDialog(QDialog):
             "interpreter": self.interpreter_input.text().strip(),
             "ruff_save_mode": self.ruff_combo.currentData(),
             "theme": self.theme_combo.currentData() or "theme.json",
-            "paper_color": self._paper_color.name(),
+            "paper_color": self._paper_override,
             "line_numbers": self.line_numbers_cb.isChecked(),
             "highlight_line": self.highlight_line_cb.isChecked(),
         }

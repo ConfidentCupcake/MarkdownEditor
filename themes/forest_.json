@@ -1,21 +1,21 @@
 {
   "theme": {
-    "name": "bloodmoon",
+    "name": "forest",
     "version": "1.0",
     "syntax": [
       {
         "default": {
-          "color": "#d8c0c0",
+          "color": "#cfe8d0",
           "font": {
             "font-weight": "normal",
             "italic": false
           },
-          "paper-color": "#180a0a"
+          "paper-color": "#101a12"
         }
       },
       {
         "keyword": {
-          "color": "#ff2222",
+          "color": "#66d977",
           "font": {
             "font-weight": "normal",
             "italic": false
@@ -33,7 +33,7 @@
       },
       {
         "string": {
-          "color": "#ff8844",
+          "color": "#a8e05f",
           "font": {
             "font-weight": "normal",
             "italic": false
@@ -60,7 +60,7 @@
       },
       {
         "comments": {
-          "color": "#7a5555",
+          "color": "#5f7a66",
           "font": {
             "font-weight": "normal",
             "italic": false
@@ -96,7 +96,7 @@
       },
       {
         "function_def": {
-          "color": "#ff6655",
+          "color": "#7ee787",
           "font": {
             "font-weight": "normal",
             "italic": false
@@ -132,7 +132,7 @@
       },
       {
         "numbers": {
-          "color": "#ffcc44",
+          "color": "#e5c07b",
           "font": {
             "font-weight": "normal",
             "italic": false
@@ -213,7 +213,7 @@
       },
       {
         "function_call": {
-          "color": "#cc4444",
+          "color": "#4ec9b0",
           "font": {
             "font-weight": "normal",
             "italic": false
@@ -222,7 +222,7 @@
       },
       {
         "local_variable": {
-          "color": "#e8b8b8",
+          "color": "#b8e6c0",
           "font": {
             "font-weight": "normal",
             "italic": false
@@ -249,7 +249,7 @@
       },
       {
         "docstring": {
-          "color": "#6f4a4a",
+          "color": "#5a7a5f",
           "font": {
             "font-weight": "normal",
             "italic": false
@@ -568,11 +568,11 @@
         "family": "JetBrains Mono",
         "font-size": 13
       },
-      "paper-color": "#180a0a",
+      "paper-color": "#101a12",
       "caret-color": "#f31122",
       "caret-line-background": "#3d424d",
       "margin-foreground": "#ff888888",
-      "margin-background": "#180a0a"
+      "margin-background": "#101a12"
     }
   }
 }

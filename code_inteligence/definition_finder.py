@@ -1,66 +1,69 @@
-from jedi import Script
 from PyQt5.QtCore import QThread, pyqtSignal
+from jedi import Script
+
 
 class DefinitionFinder(QThread):
-    """
-    Background thread that finds where a symbol is defined using Jedi.
-    Runs in a separate thread so the GUI doesn't freeze during analysis.
-    """
-    definition_found = pyqtSignal(str, int, int) # module_path, line, column
-    definition_not_found = pyqtSignal()
-    error = pyqtSignal(str)
+    """Find definitions asynchronously and replay the most recent request."""
+
+    definition_found = pyqtSignal(int, str, int, int)
+    definition_not_found = pyqtSignal(int)
+    error = pyqtSignal(int, str)
 
     def __init__(self):
         super().__init__(None)
-        self.code = ""
-        self.file_path = None
-        self.line = 1
-        self.column = 0
+        self._generation = 0
+        self._request = None
+        self._pending = None
         self._shutting_down = False
+        self.finished.connect(self._start_pending)
 
     def find(self, line: int, column: int, code: str, file_path: str = None):
-        """Start the search, Jedi uses 1-based line numbers."""
-        if self.isRunning():
+        if self._shutting_down:
             return
+        self._generation += 1
+        request = (self._generation, line, column, code, file_path)
+        if self.isRunning():
+            self._pending = request
+            return
+        self._request = request
+        self.start()
 
-        self.line = line
-        self.column = column
-        self.code = code
-        self.file_path = file_path
+    def invalidate(self):
+        self._generation += 1
+        self._pending = None
+
+    def _start_pending(self):
+        if self._shutting_down or self._pending is None:
+            return
+        self._request, self._pending = self._pending, None
         self.start()
 
     def run(self):
+        generation, line, column, code, file_path = self._request
         try:
-            script = Script(code = self.code, path = self.file_path)
-
-            definitions = script.goto(
-                line = self.line,
-                column = self.column,
-                follow_imports=True
+            definitions = Script(code=code, path=file_path).goto(
+                line=line, column=column, follow_imports=True
             )
-
             if self._shutting_down:
                 return
-
-            if definitions:
-                definition = definitions[0]
-                module_path = definition.module_path
-                line = definition.line
-                column = definition.column
-
-                if module_path is None:
-                    # Built-in or compiled module - can't open the file
-                    self.definition_not_found.emit()
-                else:
-                    self.definition_found.emit(str(module_path), line, column)
-            else:
-                self.definition_not_found.emit()
-        except Exception as err:
+            if not definitions or definitions[0].module_path is None:
+                self.definition_not_found.emit(generation)
+                return
+            definition = definitions[0]
+            self.definition_found.emit(
+                generation, str(definition.module_path), definition.line, definition.column
+            )
+        except Exception as exc:
             if not self._shutting_down:
-                self.error.emit(str(err))
+                self.error.emit(generation, str(exc))
+
+    @property
+    def generation(self):
+        return self._generation
 
     def shutdown(self):
         self._shutting_down = True
+        self._pending = None
         self.requestInterruption()
         if self.isRunning():
-            self.wait()
+            self.wait(2000)

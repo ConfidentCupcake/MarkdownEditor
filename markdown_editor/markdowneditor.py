@@ -1,11 +1,10 @@
 import sys
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.Qsci import *
-import keyword
-import pkgutil
-import os
 from pathlib import Path
+
+from PyQt5.Qsci import QsciScintilla
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QKeyEvent
+
 from markdown_editor.markdowncustomlexer import MarkdownCustomLexer
  
 
@@ -18,7 +17,6 @@ class MarkdownEditor(QsciScintilla):
         self._shutting_down = False
         self.full_path = self.path.absolute() if self.path else None
         self.is_python_file = is_python_file
-        self.BASE_DIR = os.path.dirname(os.path.abspath(__file__))
         # encoding
         self.setUtf8(True)
         # NOTE: no editor-level font anymore — the theme (via the lexer)
@@ -54,17 +52,8 @@ class MarkdownEditor(QsciScintilla):
         # set lexer — it loads themes/theme.json itself and derives every
         # font/color/paper from it (single source of truth)
         self.md_lexer = MarkdownCustomLexer(self)
-        self._apply_theme_editor_style()
-
-        self.api = QsciAPIs(self.md_lexer)
-        for key in keyword.kwlist + dir(__builtins__):
-            self.api.add(key)
-        for _, name, _ in pkgutil.iter_modules():
-            self.api.add(name)
-        self.api.prepare()
-        self.md_lexer.setAPIs(self.api)
-
         self.setLexer(self.md_lexer)
+        self._apply_theme_editor_style()
 
         self.setMarginType(0, QsciScintilla.NumberMargin)
         self.setMarginWidth(0, "000")
@@ -120,5 +109,3 @@ class MarkdownEditor(QsciScintilla):
         
     def shutdown(self):
         self._shutting_down = True
-
-

@@ -32,6 +32,8 @@ class PythonEditor(QsciScintilla):
         self.path = path
         self.full_path = self.path.absolute() if self.path else None
         self.is_python_file = is_python_file
+        self.ruff_lsp = None
+        self._manual_completion_generation = None
 
         self._ruff_hover_active = False
         self._loading_text = False
@@ -77,7 +79,6 @@ class PythonEditor(QsciScintilla):
         self.setCaretWidth(2)
 
         if self.is_python_file:
-            self.ruff_lsp = None
             if ruff_lsp_client is not None:
                 self.ruff_lsp = RuffLspController(editor=self, client=ruff_lsp_client, parent=self)
 
@@ -263,6 +264,7 @@ class PythonEditor(QsciScintilla):
         # from appearing to belong to a new symbol while a fresh Jedi request is waiting for the hover debounce timer.
         if hasattr(self, "documentation_popup"):
             self.documentation_popup.hide()  # The previous symbol's documentation must not remain visible after the user moved to a different editor location.
+        self.hover_helper.invalidate()
 
         if hasattr(self, "_ruff_hover_timer"):
             self._ruff_hover_timer.start()
@@ -278,9 +280,9 @@ class PythonEditor(QsciScintilla):
             return
         super().contextMenuEvent(event)
 
-    def _on_hover_ready(self, info: str):
+    def _on_hover_ready(self, generation: int, info: str):
         """Show the tooltip with the docstring."""
-        if self._shutting_down or not info:
+        if self._shutting_down or generation != self.hover_helper.generation or not info:
             return
 
         # The popup only exists in Python Editor mode. hasattr() also makes this method safe
@@ -300,9 +302,9 @@ class PythonEditor(QsciScintilla):
         global_pos = self.mapToGlobal(mouse_pos)
         self.documentation_popup.show_documentation(global_pos, info)
 
-    def _on_hover_empty(self):
+    def _on_hover_empty(self, generation: int):
         """Hide Jedi documenation when no symbol is under the mouse."""
-        if hasattr(self, "documentation_popup"):
+        if generation == self.hover_helper.generation and hasattr(self, "documentation_popup"):
             self.documentation_popup.hide()
 
     def goto_definition(self):
@@ -323,9 +325,9 @@ class PythonEditor(QsciScintilla):
         super().focusInEvent(event)
         self.focused.emit(self)
 
-    def _on_definition_found(self, module_path: str, line: int, column: int):
+    def _on_definition_found(self, generation: int, module_path: str, line: int, column: int):
         """Called when Jedi finds a definition location."""
-        if self._shutting_down:
+        if self._shutting_down or generation != self.definition_finder.generation:
             return
         # Emit a signal that MainWindow can connect to. We need MainWindow to open the file (it might be a different file)
         # and se the cursor position. For same-file navigation, we can do it directly
@@ -339,14 +341,14 @@ class PythonEditor(QsciScintilla):
             # We emit a signal that MainWindow connects to (You need to add this signal to the class)
             self.goto_definition_requested.emit(module_path, line - 1, column)
 
-    def _on_definition_not_found(self):
+    def _on_definition_not_found(self, generation: int):
         """Called when no definition is found."""
-        if not self._shutting_down:
+        if generation == self.definition_finder.generation and not self._shutting_down:
             pass
 
-    def _on_definition_error(self, err: str):
+    def _on_definition_error(self, generation: int, err: str):
         """Called when an error occurs during definition lookup."""
-        if not self._shutting_down:
+        if generation == self.definition_finder.generation and not self._shutting_down:
             print("Definition error:", err)
     
     def _handle_python_return(self) -> None:
@@ -404,8 +406,9 @@ class PythonEditor(QsciScintilla):
         if e.modifiers() == Qt.KeyboardModifier.ControlModifier and e.key() == Qt.Key.Key_Space:
             if self.is_python_file:
                 pos = self.getCursorPosition()
-                self.auto_completer.get_completions(pos[0] + 1, pos[1], self.text())
-                self.autoCompleteFromAPIs()
+                self._manual_completion_generation = self.auto_completer.get_completions(
+                    pos[0] + 1, pos[1], self.text()
+                )
                 return
         if e.modifiers() == Qt.KeyboardModifier.ControlModifier and e.key() == Qt.Key.Key_X:  # Cut Shortcut
             if not self.hasSelectedText():
@@ -450,9 +453,9 @@ class PythonEditor(QsciScintilla):
         file_path = str(self.full_path) if self.full_path else None
         self.signature_helper.get_signatures(line + 1, index, text, file_path)
 
-    def _on_signature_ready(self, signature: str):
+    def _on_signature_ready(self, generation: int, signature: str):
         """Show the signature popup as a tooltip near the cursor."""
-        if self._shutting_down:
+        if self._shutting_down or generation != self.signature_helper.generation:
             return
 
         # BUGFIX: self.cursorPos() does not exist in the PyQt5 QScintilla
@@ -465,14 +468,15 @@ class PythonEditor(QsciScintilla):
 
         caret = self.SendScintilla(2008)
         point = self.mapToGlobal(QPoint(
-            self.SendScintilla(2164, caret),
-            self.SendScintilla(2165, caret) - 20,  # slightly above the caret line
+            self.SendScintilla(2164, 0, caret),
+            self.SendScintilla(2165, 0, caret) - 20,  # slightly above the caret line
         ))
         QToolTip.showText(point, signature, self)
 
-    def _on_signature_empty(self):
+    def _on_signature_empty(self, generation: int):
         """No signature available -> hide tooltip."""
-        QToolTip.hideText()
+        if generation == self.signature_helper.generation:
+            QToolTip.hideText()
 
     def setTextSafely(self, text: str):
         self._loading_text = True
@@ -500,6 +504,10 @@ class PythonEditor(QsciScintilla):
         # If the user keeps moving the cursor, the timer keeps resetting
         self._pending_line = line
         self._pending_index = index
+        for helper_name in ("auto_completer", "signature_helper", "definition_finder"):
+            helper = getattr(self, helper_name, None)
+            if helper is not None:
+                helper.invalidate()
         self._autocomplete_timer.start()
 
     def _trigger_autocomplete(self):
@@ -511,13 +519,16 @@ class PythonEditor(QsciScintilla):
             return
         self.auto_completer.get_completions(self._pending_line + 1, self._pending_index, text)
 
-    def _apply_completions(self, names):
-        if self._shutting_down:
+    def _apply_completions(self, generation, names):
+        if self._shutting_down or generation != self.auto_completer.generation:
             return
         self._api.clear()
         for name in names:
             self._api.add(name)
         self._api.prepare()
+        if generation == self._manual_completion_generation:
+            self._manual_completion_generation = None
+            self.autoCompleteFromAPIs()
 
     def _handle_completion_error(self, err: str):
         if not self._shutting_down:
@@ -533,7 +544,6 @@ class PythonEditor(QsciScintilla):
             self.ruff_lsp.shutdown()
             
         if hasattr(self, "auto_completer"):
-            self.auto_completer.requestInterruption()
             try:
                 self.auto_completer.completions_ready.disconnect(self._apply_completions)
             except TypeError:
@@ -542,12 +552,13 @@ class PythonEditor(QsciScintilla):
                 self.auto_completer.error.disconnect(self._handle_completion_error)
             except TypeError:
                 pass
-            if self.auto_completer.isRunning():
-                self.auto_completer.wait()
+            self.auto_completer.shutdown()
         if hasattr(self, "definition_finder"):
             self.definition_finder.shutdown()
         if hasattr(self, "hover_helper"):
             self.hover_helper.shutdown()
+        if hasattr(self, "signature_helper"):
+            self.signature_helper.shutdown()
 
     def closeEvent(self, event):
         self.shutdown()

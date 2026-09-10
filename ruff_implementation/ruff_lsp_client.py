@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PyQt5.QtCore import QObject, QProcess, pyqtSignal
+from PyQt5.QtCore import QObject, QProcess, QTimer, pyqtSignal
 
 
 class RuffLspClient(QObject):
@@ -38,6 +38,7 @@ class RuffLspClient(QObject):
     # Emitted exactly after the initialize -> initialized handshake completes.
     # RuffLspController instances us this to send their didOpen notification.
     server_ready = pyqtSignal()
+    server_stopped = pyqtSignal()
 
     def __init__(self, python_executable: str, workspace_root: Path, parent=None):
         """
@@ -77,6 +78,8 @@ class RuffLspClient(QObject):
         # These flags distinguish "process exists" from "LSP handshake finished".
         self._started = False
         self._initialized = False
+        self._shutting_down = False
+        self._suppress_restart_once = False
 
         # QProcess signals fire on the Qt event loop. All UI-facing work remains
         # in the main Qt thread, which avoids unsafe widget access from threads.
@@ -97,7 +100,7 @@ class RuffLspClient(QObject):
         A shared workspace server is important. Do not start one server for every tab:
         a server-per-tab design wastes processes and defeats LSP workspace configuration/state handling.
         """
-        if self._started:
+        if self._started or self._shutting_down:
             # MainWindow can sefely call start more then once without spamming.
             # dublicate Ruff server process
             return
@@ -209,6 +212,8 @@ class RuffLspClient(QObject):
         """Complete the LSP startup handshake after initialize response."""
         if error is not None:
             self.server_error.emit(f"Ruff initialize failed: {error}")
+            self._suppress_restart_once = True
+            self.process.kill()
             return
 
         # This is a NOTIFICATION. It has no request id and no response.
@@ -274,7 +279,7 @@ class RuffLspClient(QObject):
         # Store before writing. Ruff can respond quickly on a local process
         self._pending_requests[request_id] = callback
 
-        self._send(
+        sent = self._send(
             {
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -282,6 +287,9 @@ class RuffLspClient(QObject):
                 "params": params,
             }
         )
+        if not sent:
+            self._pending_requests.pop(request_id, None)
+            callback(None, {"message": "Ruff server is not running"})
 
     def notify(self, method: str, params: dict):
         """Send one JSON-RPC notification with no request id."""
@@ -297,7 +305,7 @@ class RuffLspClient(QObject):
         """Frame and write a UTF-8 JSON-RPC message to Ruff stdin."""
         if self.process.state() != QProcess.Running:
             self.server_error.emit("Ruff server is not running.")
-            return
+            return False
 
         # Compact JSON is optional but produces fewer bytes over the local pipe.
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -307,10 +315,15 @@ class RuffLspClient(QObject):
 
         # QProcess.write queues the bytes asynchronously to Ruff's stdin.
         self.process.write(header + body)
+        return True
 
     def _read_stdout(self):
         """Read server output and extract every complete LSP-frame message."""
         self._read_buffer.extend(bytes(self.process.readAllStandardOutput()))
+        if len(self._read_buffer) > 16 * 1024 * 1024:
+            self._read_buffer.clear()
+            self.server_error.emit("Ruff LSP input exceeded the 16 MiB safety limit.")
+            return
 
         while True:
             # Every LSP header ends with CRLF CRLF. If it is incomplete, preserve
@@ -325,13 +338,18 @@ class RuffLspClient(QObject):
             for line in header.split("\r\n"):
                 name, seperator, value = line.partition(":")
                 if seperator and name.lower() == "content-length":
-                    content_length = int(value.strip())
+                    try:
+                        content_length = int(value.strip())
+                    except ValueError:
+                        content_length = None
                     break
 
-            if content_length is None:
+            if content_length is None or content_length < 0 or content_length > 16 * 1024 * 1024:
                 # Continueing after a broke header makes framing ambigous.
                 # Clear it ans surface and actionable infrastructure error instead.
-                self.server_error.emit("Ruff server sent an LSP message with Content-Length.")
+                self.server_error.emit(
+                    "Ruff server sent an invalid or missing Content-Length header."
+                )
                 self._read_buffer.clear()
                 return
 
@@ -382,34 +400,45 @@ class RuffLspClient(QObject):
 
     def _on_process_error(self, _error):
         """Convert QProcess startup/runtime failure into a visible Qt signal."""
-        self.server_error.emit("Ruff server process error: " + self.process.errorString())
+        if not self._shutting_down:
+            self.server_error.emit("Ruff server process error: " + self.process.errorString())
 
     def _on_finished(self, exit_code, _exit_status):
         """Restart lifecycle flags if Ruff exists enexpectedly or during shutdown."""
         self._initialized = False
         self._started = False
-        self.server_error.emit(f"Ruff server stopped with exit code {exit_code}.")
+        self._pending_requests.clear()
+        self._read_buffer.clear()
+        self.server_stopped.emit()
+        if self._suppress_restart_once:
+            self._suppress_restart_once = False
+        elif not self._shutting_down:
+            self.server_error.emit(
+                f"Ruff server stopped with exit code {exit_code}; restarting."
+            )
+            QTimer.singleShot(1000, self.start)
 
     def shutdown(self):
         """Shut down the language server using the standard LSP lifecycle."""
+        self._shutting_down = True
         if self.process.state() == QProcess.NotRunning:
             return
 
         def after_shutdown(_result, _error):
             # 'exit' is a notification sent only after shutdown response.
             self.notify("exit", {})
+            QTimer.singleShot(500, self._force_stop)
 
         if self._initialized:
             self.request("shutdown", {}, after_shutdown)
-
-            # Permit the server a short graceful-exit period.
-            # This does not run during normal typing and only affects application close.
-            if not self.process.waitForFinished(2_000):
-                self.process.kill()
-                self.process.waitForFinished(2_000)
+            QTimer.singleShot(2000, self._force_stop)
 
         else:
             # If initialization never completed, a normal shutdown request is not valid.
             # End the incomplete process direclty.
+            self._force_stop()
+
+    def _force_stop(self):
+        """Terminate a server that did not complete the asynchronous handshake."""
+        if self.process.state() != QProcess.NotRunning:
             self.process.kill()
-            self.process.waitForFinished(2_000)

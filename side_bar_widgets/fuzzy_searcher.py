@@ -12,7 +12,7 @@ class SearchItem(QListWidgetItem):
         self.lineno = lineno
         self.end = end
         self.line = line
-        self.formatted = f'{self.name}:{self.lineno}:{self.end} - {self.line} ...'
+        self.formatted = f'{self.name}:{self.lineno + 1}:{self.end + 1} - {self.line} ...'
         super().__init__(self.formatted)
 
 
@@ -24,7 +24,7 @@ class SearchItem(QListWidgetItem):
 
 
 class SearchWorker(QThread):
-    finished = pyqtSignal(list)
+    results_ready = pyqtSignal(int, list)
 
     def __init__(self):
         super(SearchWorker, self).__init__(None)
@@ -32,6 +32,9 @@ class SearchWorker(QThread):
         self.search_path: str = None
         self.search_text: str = None
         self.search_project: bool = None
+        self.generation = 0
+        self._pending = None
+        self.finished.connect(self._start_pending)
 
     def is_binary(self, path):
             '''
@@ -54,26 +57,28 @@ class SearchWorker(QThread):
         # Guard: empty search text matches everything, which is useless
         # and floods the results list.
         if not self.search_text or not self.search_text.strip():
-            self.finished.emit([])
+            self.results_ready.emit(self.generation, [])
             return
 
         # you can add more
-        exclude_dirs = set([".git", ".svn", ".hg", ".bzr", ".idea", "__pycache__", "venv"])
-        if self.search_project:
-            exclude_dirs.remove("venv")
-        exclude_files = set([".svg", ".png", ".exe", ".pyc", ".qm", ".txt", ".md"])
+        exclude_dirs = {
+            ".git", ".svn", ".hg", ".bzr", ".idea", ".vscode",
+            "__pycache__", "venv", ".venv", "env", "build", "dist",
+        }
+        exclude_files = {
+            ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico",
+            ".exe", ".dll", ".pyd", ".so", ".pyc", ".qm",
+        }
 
         # Snapshot the search parameters at the start so mutations from
         # update() during a running search don't cause inconsistent state.
         pattern = self.search_text
         search_path = self.search_path
-        search_project = self.search_project
-
         try:
             reg = re.compile(pattern, re.IGNORECASE)
         except re.error as e:
             if debug: print(e)
-            self.finished.emit([])
+            self.results_ready.emit(self.generation, [])
             return
 
         for root, _, files in self.walkdir(search_path, exclude_dirs, exclude_files):
@@ -82,10 +87,9 @@ class SearchWorker(QThread):
                 break
             for file_ in files:
                 full_path = os.path.join(root, file_)
-                if self.is_binary(full_path):
-                    continue
-
                 try: 
+                    if self.is_binary(full_path):
+                        continue
                     with open(full_path, 'r', encoding='utf8') as f:
                         try:
                             for i, line in enumerate(f):
@@ -100,20 +104,28 @@ class SearchWorker(QThread):
                                     self.items.append(fd)
                         except re.error as e:
                             if debug: print(e)
-                except UnicodeDecodeError as e:
+                except (OSError, UnicodeError) as e:
                     if debug: print(e)
                     continue
 
-        self.finished.emit(self.items)
+        self.results_ready.emit(self.generation, self.items)
 
     def run(self):
         self.search()
 
     def update(self, pattern, path, search_project):
-        # Don't mutate fields or restart while the previous search is running
+        self.generation += 1
+        request = (self.generation, pattern, path, search_project)
         if self.isRunning():
+            self._pending = request
             return
-        self.search_text = pattern
-        self.search_path = path
-        self.search_project = search_project
+        self._start_request(request)
+
+    def _start_request(self, request):
+        self.generation, self.search_text, self.search_path, self.search_project = request
         self.start()
+
+    def _start_pending(self):
+        if self._pending is not None:
+            request, self._pending = self._pending, None
+            self._start_request(request)

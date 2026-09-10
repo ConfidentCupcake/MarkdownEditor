@@ -26,6 +26,12 @@ Thumbs.db
 
 # Personal settings (contains your interpreter path)
 settings.json
+crash_log.txt
+*.log
+
+# Native extension build products are platform/Python-version specific.
+*.pyd
+*.so
 
 # Icons (optional — keep these if you want them in the repo)
 # icons/

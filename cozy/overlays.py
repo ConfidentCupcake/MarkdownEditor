@@ -16,7 +16,7 @@ class ScanlineOverlay(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.hide()
         
-    def painterEvent(self, _):
+    def paintEvent(self, _):
         painter = QPainter(self)
         line = QColor(0, 0, 0, 28)
         for y in range(0, self.height(), 3):
@@ -26,4 +26,3 @@ class ScanlineOverlay(QWidget):
     def resizeEvent(self, e):
         self.setGeometry(self.parentWidget().rect())
         super().resizeEvent(e)
-    
