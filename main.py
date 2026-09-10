@@ -1,39 +1,39 @@
+import datetime
 import json
 import os
-import sys
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
-from pathlib import Path
 import traceback
-import datetime
+from pathlib import Path
 
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu-shader-disk-cache")
 
 import markdown
-import resources_rc  # noqa: F401 - register resources generated from icons/resources.qrc
-
 from PyQt5.Qsci import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import *
 
-from con_term.console_widget import ConsoleWidget
-from side_bar_widgets.file_manager import FileManager
+import resources_rc  # noqa: F401 - register resources generated from icons/resources.qrc
 from code_inteligence.find_replace import FindReplaceBar
-from side_bar_widgets.fuzzy_searcher import SearchItem, SearchWorker
-from markdown_editor.markdowneditor import MarkdownEditor
 from code_inteligence.multi_tab_view import MultiTabView
+from con_term.console_widget import ConsoleWidget
+from con_term.terminal_widget import TerminalWidget
+from cozy.cat_controller import CatController
+from markdown_editor.markdowneditor import MarkdownEditor
 from python_editor.python_runner import PythonRunner
 from python_editor.pythoneditor import PythonEditor
 from ruff_implementation.ruff_lsp_client import RuffLspClient
-from con_term.terminal_widget import TerminalWidget
 from side_bar_widgets.code_outline import CodeOutlineTree
-from cozy.cat_controller import CatController
+from side_bar_widgets.file_manager import FileManager
+from side_bar_widgets.fuzzy_searcher import SearchItem, SearchWorker
 
 APP_VERSION = "v1.9.2"
+
 
 def _excepthook(exc_type, exc, tb):
     try:
@@ -49,9 +49,11 @@ def _excepthook(exc_type, exc, tb):
             traceback.print_exception(exc_type, exc, tb, file=f)
     except OSError:
         pass
-    traceback.print_exception(exc_type, exc, tb) # also as stderr
-    
+    traceback.print_exception(exc_type, exc, tb)  # also as stderr
+
+
 sys.excepthook = _excepthook
+
 
 def resource_path(relative_path):
     """
@@ -148,7 +150,7 @@ class MainWindow(QMainWindow):
            pre { background:#1e1f22; padding:1em; border-radius:6px; overflow-x:auto; }
            """
         self.init_ui()
-        
+
         if hasattr(sys, "_MEIPASS"):
             # We're running as a bundled exe
             import os
@@ -190,7 +192,7 @@ class MainWindow(QMainWindow):
                 QMenuBar { background-color: #2d2d2d; color: floralwhite; }
                 QTabWidget { background-color: #1e1f22; color: #d3d3d3; }
             """)
-            
+
         self._outline_debounce = QTimer(self)
         self._outline_debounce.setSingleShot(True)
         self._outline_debounce.setInterval(500)
@@ -199,7 +201,7 @@ class MainWindow(QMainWindow):
 
         self.set_up_menu()
         self.set_up_body()
-        
+
         self._git_refresh_timer = QTimer(self)
         self._git_refresh_timer.setInterval(15000)
         self._git_refresh_timer.timeout.connect(self.file_manager.check_git_status)
@@ -235,17 +237,23 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.cat)
 
         from cozy.neko import NekoChaser
+
         self.neko = NekoChaser(self)
         self.neko.start()
 
         # C2: level-ups plat rhe Dance frames and announce themselves
-        self.cat.level_up.connect(lambda lvl, title: self.statusBar().showMessage(f"Cat leveled up: {title} (level {lvl})", 3000))
+        self.cat.level_up.connect(
+            lambda lvl, title: self.statusBar().showMessage(
+                f"Cat leveled up: {title} (level {lvl})", 3000
+            )
+        )
 
         # C1: pet milestones (achievement logic lives in the handler, NOT in the lambda
         # keep lambdas dump, they cannot be extended
         self.cat.petted.connect(self._on_cat_petted)
 
         from cozy.power_mode import PowerModeController
+
         # Honor the saved Power Mode states from the View menu dropdown.
         self.power = PowerModeController(
             self,
@@ -255,7 +263,7 @@ class MainWindow(QMainWindow):
             shake_on=self.power_shake_action.isChecked(),
             glow_enabled=self.power_glow_action.isChecked(),
         )
-        
+
         self.python_runner.process_started.connect(self._on_run_started)
         self.python_runner.process_finished.connect(self._on_run_finished)
 
@@ -274,15 +282,11 @@ class MainWindow(QMainWindow):
         # Timers re-arm on activity via _connect_editor's textChanged below.
         self._cat_sleepy_timer = QTimer(self)
         self._cat_sleepy_timer.setSingleShot(True)
-        self._cat_sleepy_timer.timeout.connect(
-            lambda: self.cat.set_state("sleepy", 120000)
-        )
+        self._cat_sleepy_timer.timeout.connect(lambda: self.cat.set_state("sleepy", 120000))
 
         self._cat_sleep_timer = QTimer(self)
         self._cat_sleep_timer.setSingleShot(True)
-        self._cat_sleep_timer.timeout.connect(
-            lambda: self.cat.set_state("sleep", 300000)
-        )
+        self._cat_sleep_timer.timeout.connect(lambda: self.cat.set_state("sleep", 300000))
 
         self._cat_box_timer = QTimer(self)
         self._cat_box_timer.setSingleShot(True)
@@ -308,12 +312,12 @@ class MainWindow(QMainWindow):
         self.cat.set_state("box", 5_000)
         self._cat_boxed = True
         QTimer.singleShot(5_000, lambda: self.cat.set_state("box_idle", 120_000))
-        
+
     def _update_outline(self):
         editor = self.current_editor()
         if isinstance(editor, PythonEditor):
             self.outline_tree.update_outline(editor.text())
-        
+
     def update_word_count(self):
         """Update the word/character count in the status bar."""
         editor = self.current_editor()
@@ -346,6 +350,7 @@ class MainWindow(QMainWindow):
         if total_pets == 1000:
             self.cat.set_party_hat(True)
             self.statusBar().showMessage("Achievement unlocked: Certified Cat Person", 5000)
+
     def _on_run_started(self):
         """
         C4: excited typing (Excited frames) while the process is alive.
@@ -363,9 +368,10 @@ class MainWindow(QMainWindow):
         if exit_code == 0:
             self.cat.set_state("stretch", 2500)
             self.cat.add_xp(10)
-            r = self.tab_view.geometry()          # center of the editor area
-            self.power.particles.burst(r.width() // 2, r.height() // 3,
-                                       count=40)  # big celebratory burst
+            r = self.tab_view.geometry()  # center of the editor area
+            self.power.particles.burst(
+                r.width() // 2, r.height() // 3, count=40
+            )  # big celebratory burst
         else:
             # Sad frames for a normal failure, Cry frames when the console
             # shows a traceback (crash). If you don't distinguish yet, use
@@ -389,8 +395,7 @@ class MainWindow(QMainWindow):
         if power is not None:
             power.set_enabled(on)
         self.settings.setValue("power_mode", on)
-        self.statusBar().showMessage(
-            "Power Mode ON" if on else "Power Mode OFF", 2000)
+        self.statusBar().showMessage("Power Mode ON" if on else "Power Mode OFF", 2000)
 
     def _toggle_power_particles(self, on: bool):
         """B1: particles-only switch (View -> Power Mode -> Particles)."""
@@ -398,8 +403,7 @@ class MainWindow(QMainWindow):
         if power is not None:
             power.set_particles(on)
         self.settings.setValue("power_particles", on)
-        self.statusBar().showMessage(
-            "Particles ON" if on else "Particles OFF", 2000)
+        self.statusBar().showMessage("Particles ON" if on else "Particles OFF", 2000)
 
     def _toggle_power_shake(self, on: bool):
         """B1: screen-shake-only switch (View -> Power Mode -> Screen Shake)."""
@@ -407,8 +411,7 @@ class MainWindow(QMainWindow):
         if power is not None:
             power.set_shake_enabled(on)
         self.settings.setValue("power_shake", on)
-        self.statusBar().showMessage(
-            "Screen Shake ON" if on else "Screen Shake OFF", 2000)
+        self.statusBar().showMessage("Screen Shake ON" if on else "Screen Shake OFF", 2000)
 
     def _toggle_power_glow(self, on: bool):
         """C7: combo-glow-only switch (View -> Power Mode -> Combo Glow)."""
@@ -416,9 +419,8 @@ class MainWindow(QMainWindow):
         if power is not None:
             power.set_glow(on)
         self.settings.setValue("power_glow", on)
-        self.statusBar().showMessage(
-            "Combo Glow ON" if on else "Combo Glow OFF", 2000)
-            
+        self.statusBar().showMessage("Combo Glow ON" if on else "Combo Glow OFF", 2000)
+
     def _on_typing_xp(self):
         """
         C2: 1 XP per 10 textChanged invocations.
@@ -429,6 +431,7 @@ class MainWindow(QMainWindow):
             is immune to document size and direction fo the edit.
         """
         from cozy.cat_controller import XP_RULES
+
         self._xp_key_counter = getattr(self, "_xp_key_counter", 0) + 1
         if self._xp_key_counter >= XP_RULES["keys_per_xp"]:
             self._xp_key_counter = 0
@@ -460,7 +463,7 @@ class MainWindow(QMainWindow):
         self.tab_view.set_editor_title(editor, title)
         if getattr(editor, "path", None) is not None:
             self.file_manager.check_git_status()
-        
+
     def update_cursor_position(self, line: int, index: int):
         """
         Update the Ln/Col display in the status bar.
@@ -552,16 +555,16 @@ class MainWindow(QMainWindow):
         )
         if isinstance(editor, PythonEditor):
             editor.goto_definition_requested.connect(self._open_file_at_position)
-    
+
     def _cat_unbox(self):
         """
-        If the cat was boxed (10+ min idle), pop it out on the first 
+        If the cat was boxed (10+ min idle), pop it out on the first
         keystroke - then stop reacting until it boxes again.
         """
         if getattr(self, "_cat_boxed", False):
             self._cat_boxed = False
             self.cat.set_state("box_pop", 2000)
-    
+
     def _on_ruff_lsp_error(self, message: str):
         """Expose Ruff LSP startup and protocol failures to the user."""
         print(f"Ruff LSP error {message}")
@@ -802,7 +805,7 @@ class MainWindow(QMainWindow):
         starting_window_size.triggered.connect(self._startup_window_size)
 
         view_menu.addSeparator()
-        
+
         git_refresh_action = view_menu.addAction("Refresh Git Status")
         git_refresh_action.setShortcut("Ctrl+Shift+G")
         git_refresh_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -814,14 +817,13 @@ class MainWindow(QMainWindow):
         # lookup to trigger time — the menu can only fire after the
         # window is shown, long after file_manager exists (same
         # launch-order rule as the cat / power-mode handlers).
-        git_refresh_action.triggered.connect(
-            lambda: self.file_manager.check_git_status())
-        
+        git_refresh_action.triggered.connect(lambda: self.file_manager.check_git_status())
+
         settings_action = view_menu.addAction("Settings")
         settings_action.setShortcut("Ctrl+Alt+S")
         settings_action.setShortcutContext(Qt.ApplicationShortcut)
         settings_action.triggered.connect(self.open_settings)
-        
+
         hacker_action = view_menu.addAction("Hacker-Mode")
         hacker_action.setShortcut("Ctrl+Shift+H")
         hacker_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -839,8 +841,7 @@ class MainWindow(QMainWindow):
 
         self.power_mode_action = power_menu.addAction("Enabled")
         self.power_mode_action.setCheckable(True)
-        self.power_mode_action.setChecked(
-            self.settings.value("power_mode", True, type=bool))
+        self.power_mode_action.setChecked(self.settings.value("power_mode", True, type=bool))
         self.power_mode_action.setShortcut("Ctrl+Shift+X")
         self.power_mode_action.setShortcutContext(Qt.ApplicationShortcut)
         self.power_mode_action.toggled.connect(self._toggle_power_mode)
@@ -850,19 +851,18 @@ class MainWindow(QMainWindow):
         self.power_particles_action = power_menu.addAction("Particles")
         self.power_particles_action.setCheckable(True)
         self.power_particles_action.setChecked(
-            self.settings.value("power_particles", True, type=bool))
+            self.settings.value("power_particles", True, type=bool)
+        )
         self.power_particles_action.toggled.connect(self._toggle_power_particles)
 
         self.power_shake_action = power_menu.addAction("Screen Shake")
         self.power_shake_action.setCheckable(True)
-        self.power_shake_action.setChecked(
-            self.settings.value("power_shake", True, type=bool))
+        self.power_shake_action.setChecked(self.settings.value("power_shake", True, type=bool))
         self.power_shake_action.toggled.connect(self._toggle_power_shake)
 
         self.power_glow_action = power_menu.addAction("Combo Glow")
         self.power_glow_action.setCheckable(True)
-        self.power_glow_action.setChecked(
-            self.settings.value("power_glow", True, type=bool))
+        self.power_glow_action.setChecked(self.settings.value("power_glow", True, type=bool))
         self.power_glow_action.toggled.connect(self._toggle_power_glow)
 
         help_menu = menu_bar.addMenu("Help")
@@ -1225,7 +1225,7 @@ class MainWindow(QMainWindow):
         """
         Load all user preferences from the platform-native QSettings store.
         """
-        
+
         # --- QSettings side --- #
         # .value(key, default, type=) coerces the stored values: QSettings serialises booleans/ints as strings
         # on some platforms, and the type= argument converts them back safely.
@@ -1250,7 +1250,8 @@ class MainWindow(QMainWindow):
             # "Reset to theme" button can drop the override.
             "paper_color": (
                 self.settings.value("paper_color", type=str)
-                if self.settings.contains("paper_color") else None
+                if self.settings.contains("paper_color")
+                else None
             ),
             "theme_paper": theme_editor.get("paper_color", "#1e1f22"),
             "tab_width": self.settings.value("tab_width", 4, type=int),
@@ -1260,7 +1261,7 @@ class MainWindow(QMainWindow):
             "line_numbers": self.settings.value("line_numbers", True, type=bool),
             "highlight_line": self.settings.value("highlight_line", True, type=bool),
         }
-        
+
     def _save_settings(self, new_settings: dict):
         """Persist an edited settings dictionary to QSettings.
         Called only after the user clicked Save in the dialog.
@@ -1275,9 +1276,15 @@ class MainWindow(QMainWindow):
         # --- QSettings -------------------------------------------------- #
         # NOTE: font_family / font_size are NOT QSettings keys anymore —
         # they live in the active theme.json (see _write_theme_editor()).
-        for key in ("ruff_save_mode", "tab_width",
-                    "word_wrap", "restore_tabs", "theme", "line_numbers",
-                    "highlight_line"):
+        for key in (
+            "ruff_save_mode",
+            "tab_width",
+            "word_wrap",
+            "restore_tabs",
+            "theme",
+            "line_numbers",
+            "highlight_line",
+        ):
             self.settings.setValue(key, new_settings[key])
         if new_settings.get("paper_color") is None:
             self.settings.remove("paper_color")
@@ -1306,11 +1313,11 @@ class MainWindow(QMainWindow):
             # Font changes are persisted INTO the active theme.json (its
             # editor.font block) — the theme is the single source of truth.
             # Everything else still goes through _save_settings/QSettings.
-            if (new_settings["font_family"], new_settings["font_size"]) != \
-                    (self._current_settings.get("font_family"),
-                     self._current_settings.get("font_size")):
-                self._write_theme_editor(new_settings["font_family"],
-                                         new_settings["font_size"])
+            if (new_settings["font_family"], new_settings["font_size"]) != (
+                self._current_settings.get("font_family"),
+                self._current_settings.get("font_size"),
+            ):
+                self._write_theme_editor(new_settings["font_family"], new_settings["font_size"])
 
             self._save_settings(new_settings)
 
@@ -1339,32 +1346,30 @@ class MainWindow(QMainWindow):
         if settings["interpreter"]:
             previous = self.python_runner.interpreter
             self.python_runner.set_interpreter(settings["interpreter"])
-            self.statusBar().showMessage(
-                f"Interpreter: {self.python_runner.interpreter}", 3000)
-            if (previous != settings["interpreter"]
-                    and hasattr(self, "ruff_lsp_client")):
+            self.statusBar().showMessage(f"Interpreter: {self.python_runner.interpreter}", 3000)
+            if previous != settings["interpreter"] and hasattr(self, "ruff_lsp_client"):
                 self._restart_ruff(settings["interpreter"])
-    
+
     def set_hacker_mode(self, on: bool):
         """
         C17: the full bundle - CRT theme + sanlines in one switch.
-        
+
         Reuses the settings machinery delliberately: theme switching, lexer recreation,
         thr margin color, fix and per-editor application were already built and debugged.
         Never write a second theme pipeline when one exists.
-        
-        :param on: True = hacker.json + scanlines; False = default theme 
+
+        :param on: True = hacker.json + scanlines; False = default theme
         """
         if on and not self._hacker:
             self._pre_hacker_theme = self.settings.value("theme", "theme.json", type=str)
         self._hacker = bool(on)
         self._set_scanlines_visible(self._hacker)
-            
+
         settings = self._load_settings()
         settings["theme"] = "hacker.json" if self._hacker else self._pre_hacker_theme
         self._save_settings(settings)
         self._apply_settings(settings)
-        
+
         self.statusBar().showMessage("HACK THE PLANET" if on else "Back to reality", 2500)
 
     def _set_scanlines_visible(self, visible: bool):
@@ -1381,12 +1386,10 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "scanlines"):
             self.scanlines.setGeometry(self.rect())
-        
-        
+
     def _active_theme_path(self):
         """Absolute path of the theme file the settings currently name."""
-        return self._theme_path(
-            self.settings.value("theme", "theme.json", type=str))
+        return self._theme_path(self.settings.value("theme", "theme.json", type=str))
 
     def _read_theme_editor(self) -> dict:
         """
@@ -1400,10 +1403,11 @@ class MainWindow(QMainWindow):
         The theme file is the single source of truth for these values —
         QSettings only stores WHICH theme is active.
         """
-        path = self._active_theme_path() or \
-            str(Path(__file__).resolve().parent / "themes" / "theme.json")
+        path = self._active_theme_path() or str(
+            Path(__file__).resolve().parent / "themes" / "theme.json"
+        )
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             editor = data.get("theme", {}).get("editor", {})
             gfont = editor.get("font", {})
@@ -1413,8 +1417,7 @@ class MainWindow(QMainWindow):
                 "paper_color": editor.get("paper-color", "#1e1f22"),
             }
         except (OSError, json.JSONDecodeError, ValueError):
-            return {"font_family": "JetBrains Mono", "font_size": 13,
-                    "paper_color": "#1e1f22"}
+            return {"font_family": "JetBrains Mono", "font_size": 13, "paper_color": "#1e1f22"}
 
     def _write_theme_editor(self, font_family: str, font_size: int) -> None:
         """
@@ -1434,15 +1437,15 @@ class MainWindow(QMainWindow):
         if not source:
             return
         theme_name = self.settings.value("theme", "theme.json", type=str)
-        config_root = Path(QStandardPaths.writableLocation(
-            QStandardPaths.AppConfigLocation
-        )) / "themes"
+        config_root = (
+            Path(QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation)) / "themes"
+        )
         config_root.mkdir(parents=True, exist_ok=True)
         path = config_root / theme_name
         if not path.exists():
             shutil.copy2(source, path)
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             editor = data.setdefault("theme", {}).setdefault("editor", {})
             editor.setdefault("font", {})
@@ -1467,13 +1470,16 @@ class MainWindow(QMainWindow):
         """
         if not theme_name:
             return None
-        user_candidate = Path(QStandardPaths.writableLocation(
-            QStandardPaths.AppConfigLocation
-        )) / "themes" / theme_name
+        user_candidate = (
+            Path(QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation))
+            / "themes"
+            / theme_name
+        )
         if user_candidate.is_file():
             return str(user_candidate)
-        base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) \
-            else Path(__file__).resolve().parent
+        base = (
+            Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+        )
         candidate = base / "themes" / theme_name
         return str(candidate) if candidate.is_file() else None
 
@@ -1485,10 +1491,11 @@ class MainWindow(QMainWindow):
         can receive the same look without duplicating this code.
         """
         from PyQt5.Qsci import QsciScintilla
-        from markdown_editor.markdowneditor import MarkdownEditor
-        from python_editor.pythoneditor import PythonEditor
+
         from markdown_editor.markdowncustomlexer import MarkdownCustomLexer
+        from markdown_editor.markdowneditor import MarkdownEditor
         from python_editor.custompythonlexer import PyCustomLexer
+        from python_editor.pythoneditor import PythonEditor
 
         # THEME-MANAGED STYLING: font family/size and the paper color now
         # come from the theme's editor section (the Settings dialog writes
@@ -1500,13 +1507,11 @@ class MainWindow(QMainWindow):
 
         # Paper override from the Settings color picker (QSettings key,
         # wins over the theme's own paper until reset to default).
-        paper = QColor(settings["paper_color"]) if settings.get("paper_color") \
-            else None
+        paper = QColor(settings["paper_color"]) if settings.get("paper_color") else None
 
         # QsciScintilla.WrapWord soft-wraps at the right edge;
         # WrapNone keeps the horizontal scrollbar behaviour.
-        wrap = (QsciScintilla.WrapWord if settings["word_wrap"]
-                else QsciScintilla.WrapNone)
+        wrap = QsciScintilla.WrapWord if settings["word_wrap"] else QsciScintilla.WrapNone
 
         editor.setTabWidth(settings["tab_width"])
         editor.setWrapMode(wrap)
@@ -1525,16 +1530,14 @@ class MainWindow(QMainWindow):
         # by setLexer().
         theme_path = self._theme_path(settings.get("theme"))
         if isinstance(editor, MarkdownEditor):
-            editor.md_lexer = MarkdownCustomLexer(editor, theme=theme_path,
-                                                  paper=paper)
+            editor.md_lexer = MarkdownCustomLexer(editor, theme=theme_path, paper=paper)
             editor.setLexer(editor.md_lexer)
             # Re-push the theme's editor-wide look (font, margins, caret,
             # paper). The editor's own method handles the reset-a-lexer-
             # wipes-margin-colors problem in exactly one place.
             editor._apply_theme_editor_style()
         elif isinstance(editor, PythonEditor):
-            editor.py_lexer = PyCustomLexer(editor, theme=theme_path,
-                                            paper=paper)
+            editor.py_lexer = PyCustomLexer(editor, theme=theme_path, paper=paper)
             editor.setLexer(editor.py_lexer)
             editor._apply_theme_editor_style()
 
@@ -1542,6 +1545,7 @@ class MainWindow(QMainWindow):
             # so reattach a fresh one to the new lexer. The AutoCompleter
             # thread repopulates the word list as soon as the user types.
             from PyQt5.Qsci import QsciAPIs
+
             if getattr(editor, "_api", None) is not None:
                 editor._api = QsciAPIs(editor.py_lexer)
                 editor.auto_completer.api = editor._api
@@ -1564,8 +1568,7 @@ class MainWindow(QMainWindow):
         with open(path, "rb") as f:
             return b"\0" in f.read(1024)
 
-    def set_new_tab(self, path: Path, is_new_file=False, target_group=None,
-                    is_python_file=None):
+    def set_new_tab(self, path: Path, is_new_file=False, target_group=None, is_python_file=None):
         path = Path(path) if path is not None else None
         if is_new_file:
             return self.new_file(target_group=target_group)
@@ -1581,16 +1584,16 @@ class MainWindow(QMainWindow):
         if existing is not None:
             self.tab_view.focus_editor(existing)
             return existing
-        
+
         # IMPORTANT:
         # Do not select PythonEditor/MarkdownEditor here based on the global python_editor_active flag.
         # Existing files must be selected from their own extensions, not from whichever editor mode was last active.
         editor = self.get_editor(path=path, is_python_file=is_python_file)
-            
+
         if isinstance(editor, PythonEditor):
             self.outline_tree.update_outline(editor.text())
         else:
-            self.outline_tree.clear()        
+            self.outline_tree.clear()
 
         try:
             raw = path.read_bytes()
@@ -1645,7 +1648,7 @@ class MainWindow(QMainWindow):
             }
         """)
         return frame
-    
+
     def set_up_body(self):
         # Body
         body_frame = QFrame()
@@ -1696,11 +1699,11 @@ class MainWindow(QMainWindow):
         self.sidebar_labels["search"] = search_label
         side_bar_layout.addWidget(search_label)
         self.side_bar.setLayout(side_bar_layout)
-        
+
         outline_label = self.get_sidebar_label(resource_path("icons/code.png"), "outline")
         self.sidebar_labels["outline"] = outline_label
-        side_bar_layout.addWidget(outline_label)        
-        
+        side_bar_layout.addWidget(outline_label)
+
         self.outline_tree = CodeOutlineTree()
         self.outline_tree.symbol_clicked.connect(self._goto_symbol)
 
@@ -1709,13 +1712,11 @@ class MainWindow(QMainWindow):
         outline_layout.setContentsMargins(0, 0, 0, 0)
         outline_layout.setSpacing(0)
 
-
         outline_label = QLabel("Outline")
         outline_label.setStyleSheet("color: #636d83; padding: 4px 8px; font-size: 12px;")
         outline_layout.addWidget(outline_label)
         outline_layout.addWidget(self.outline_tree)
         self.outline_frame.setLayout(outline_layout)
-
 
         # split view
         self.hs_split = QSplitter(Qt.Orientation.Horizontal)
@@ -1735,11 +1736,10 @@ class MainWindow(QMainWindow):
         # setup layout
         self.file_manager_layout.addWidget(self.file_manager)
         self.file_manager_frame.setLayout(self.file_manager_layout)
-             
-        
+
         # search manager
         self.search_frame = self.get_frame()
-        
+
         search_layout = QVBoxLayout()
         search_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         search_layout.setContentsMargins(0, 10, 0, 0)
@@ -1792,7 +1792,7 @@ class MainWindow(QMainWindow):
         self.side_panel.setMaximumWidth(450)  # was 400 — give more room
         self.side_panel.addWidget(self.file_manager_frame)
         self.side_panel.addWidget(self.search_frame)
-        self.side_panel.addWidget(self.outline_frame)        
+        self.side_panel.addWidget(self.outline_frame)
 
         body.addWidget(self.side_bar)
         self.hs_split.addWidget(self.side_panel)
@@ -1804,15 +1804,15 @@ class MainWindow(QMainWindow):
         body_frame.setLayout(body)
 
         self.setCentralWidget(body_frame)
-    
-    def _goto_symbol(self, line:int, column:int):
+
+    def _goto_symbol(self, line: int, column: int):
         """Jump to a symbol in the current editor."""
         editor = self.current_editor()
         if editor is not None:
             editor.setCursorPosition(line, column)
             editor.ensureLineVisible(line)
-            editor.setFocus()            
-        
+            editor.setFocus()
+
     # BUGFIX: this whole block used the plain QTabWidget API (tabBar(), count(),
     # widget(index), close_tab()) which does not exist on MultiTabView, and
     # close_tab() was never defined at all -> AttributeError/NameError on every
@@ -2064,7 +2064,7 @@ class MainWindow(QMainWindow):
         panels = {
             "folder": self.file_manager_frame,
             "search": self.search_frame,
-            "outline": self.outline_frame,            
+            "outline": self.outline_frame,
         }
         # Update icoon states. Reset all to gray, then set active to blue
         icon_map = {
@@ -2159,8 +2159,12 @@ class MainWindow(QMainWindow):
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=path.parent,
-                prefix=f".{path.stem}.", suffix=path.suffix, delete=False,
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.stem}.",
+                suffix=path.suffix,
+                delete=False,
             ) as handle:
                 temporary = Path(handle.name)
                 handle.write(text)
@@ -2171,8 +2175,12 @@ class MainWindow(QMainWindow):
             )
             for index, command in enumerate(commands):
                 result = subprocess.run(
-                    command, cwd=str(path.parent), capture_output=True,
-                    text=True, timeout=20, check=False,
+                    command,
+                    cwd=str(path.parent),
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                    check=False,
                 )
                 allowed = {0, 1} if index == 0 else {0}
                 if result.returncode not in allowed:
@@ -2201,7 +2209,8 @@ class MainWindow(QMainWindow):
             formatted = self._run_ruff_before_save(path, original)
         except (OSError, subprocess.SubprocessError, RuntimeError) as error:
             reply = QMessageBox.warning(
-                self, "Ruff on save",
+                self,
+                "Ruff on save",
                 f"Ruff could not process this file:\n{error}\n\nSave without Ruff?",
                 QMessageBox.Save | QMessageBox.Cancel,
                 QMessageBox.Save,
@@ -2382,7 +2391,6 @@ class MainWindow(QMainWindow):
             self.outline_tree.update_outline(editor.text())
         else:
             self.outline_tree.clear()
-                
 
         if isinstance(editor, MarkdownEditor):
             self.preview.show()
@@ -2459,9 +2467,7 @@ class MainWindow(QMainWindow):
         selection = old.getSelection()
         first_visible = old.firstVisibleLine()
 
-        new_editor = self.get_editor(
-            path=path, is_python_file=(EditorClass is PythonEditor)
-        )
+        new_editor = self.get_editor(path=path, is_python_file=(EditorClass is PythonEditor))
         new_editor.setTextSafely(text)
         self._connect_editor(new_editor)
 
@@ -2525,16 +2531,16 @@ class MainWindow(QMainWindow):
         # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a2d0e8b6e0a3e3a9c0e3a3e3a3e3a3e3a
 
         editor.findFirst(
-            text,           # the search string or regex
-            regex,          # is it a regex?
-            case_sensitive, # case-sensitive?
-            whole_word,     # whole-word match only?
-            True,           # wrap around to top when reaching bottom?
-            True,           # search forward?
-            line,           # start line
-            index,          # start column
-            True,           # show the match (scroll to it)?
-            False           # POSIX regex mode (False = use Python regex)
+            text,  # the search string or regex
+            regex,  # is it a regex?
+            case_sensitive,  # case-sensitive?
+            whole_word,  # whole-word match only?
+            True,  # wrap around to top when reaching bottom?
+            True,  # search forward?
+            line,  # start line
+            index,  # start column
+            True,  # show the match (scroll to it)?
+            False,  # POSIX regex mode (False = use Python regex)
         )
 
     def _do_find_prev(self, text, case_sensitive, whole_word, regex):
@@ -2559,12 +2565,12 @@ class MainWindow(QMainWindow):
             regex,
             case_sensitive,
             whole_word,
-            True,    # wrap around
-            False,   # search BACKWARD
+            True,  # wrap around
+            False,  # search BACKWARD
             line,
             index,
-            True,    # show the match
-            False
+            True,  # show the match
+            False,
         )
 
     def _do_replace(self, find_text, replace_text, case_sensitive, whole_word, regex):
@@ -2596,9 +2602,7 @@ class MainWindow(QMainWindow):
         if regex:
             try:
                 if re.compile(find_text).match("") is not None:
-                    self.statusBar().showMessage(
-                        "Zero-length regex cannot be replaced", 4000
-                    )
+                    self.statusBar().showMessage("Zero-length regex cannot be replaced", 4000)
                     return
             except re.error:
                 return
@@ -2673,15 +2677,14 @@ class MainWindow(QMainWindow):
         self.ruff_lsp_client.shutdown()
         event.accept()
         super().closeEvent(event)
-        
-        
+
     def save_session(self):
         """
         Persist the open-tab layout so the next launch can restore it.
-        
+
         The session is stored as One JSON string under QSettings key "session"
         (QSettings cannot reliably round-trip nested Python dicts, but strings are always safe.
-        
+
         Saved per tab:
             path -> absolute file path; untitled editors (path=None) are skipped,
                     they cannot be reopened from disk.
@@ -2689,35 +2692,38 @@ class MainWindow(QMainWindow):
                       from the self.python_editor_active flag, so the flag must be flipped per file during restore.
             group -> index of the split group (0 = left/first group)
                      so a split layout survives a restart.
-                     
+
         Also saved:
             active  -> path of the focused tab (re-focused on restore)
             python_mode -> the global mode flag, so NEW files open after a restart behave as before.
-        
+
         Silently does nothing when the user disabled session restore in the Settings dialog
         (QSettings key "restore_tabs").
         """
         import json
+
         if not self.settings.value("restore_tabs", True, type=bool):
             return
-        
+
         # group() returns the life QTabWidgets in left-to-right order;
         # its index for an editor's group is exactly the number we save.
         groups = list(self.tab_view.groups())
         tabs = []
-        
+
         for editor in self.tab_view.all_editors():
             path = getattr(editor, "path", None)
             if path is None:
                 continue
             group = self.tab_view.group_for_editor(editor)
-            tabs.append({
-                "path": str(path),
-                # isinstance() is the ground truth: the class IS the mode.
-                "python": isinstance(editor, PythonEditor),
-                "group": groups.index(group) if group in groups else 0,
-                })
-            
+            tabs.append(
+                {
+                    "path": str(path),
+                    # isinstance() is the ground truth: the class IS the mode.
+                    "python": isinstance(editor, PythonEditor),
+                    "group": groups.index(group) if group in groups else 0,
+                }
+            )
+
         active = self.current_editor()
         active_path = getattr(active, "path", None)
         session = {
@@ -2726,11 +2732,11 @@ class MainWindow(QMainWindow):
             "python_mode": bool(self.python_editor_active),
         }
         self.settings.setValue("session", json.dumps(session))
-            
+
     def _restore_session(self):
         """
         Reopen the tabs saved by _save_session().
-        
+
         Strategy:
         1.  Parse the stored JSON (any error -> give up silently; a fresh session is always
             a valid state).
@@ -2738,54 +2744,58 @@ class MainWindow(QMainWindow):
         3.  Reopen each file with set_new_tab(), flipping self.python_editor_active
             per file so each tab gets the right editor class.
         4.  Re-focus the tab that was active at close time.
-        
+
         set_new_tab() already handles the hard parts for us: binary-file rejection,
         duplicate detection (find_editor_by_path), recent-file bookkeeping and dirty-state signal wiring.
         """
         import json
-        
+
         if not self.settings.value("restore_tabs", True, type=bool):
             return
-        
+
         raw = self.settings.value("session", "", type=str)
         if not raw:
             return
-        
+
         try:
             session = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             return
-        
+
         tabs = session.get("tabs", [])
         if not isinstance(tabs, list) or len(tabs) > 100:
             return
-        tabs = [entry for entry in tabs if (
-            isinstance(entry, dict)
-            and isinstance(entry.get("path"), str)
-            and isinstance(entry.get("python", False), bool)
-            and isinstance(entry.get("group", 0), int)
-            and 0 <= entry.get("group", 0) < 20
-        )]
+        tabs = [
+            entry
+            for entry in tabs
+            if (
+                isinstance(entry, dict)
+                and isinstance(entry.get("path"), str)
+                and isinstance(entry.get("python", False), bool)
+                and isinstance(entry.get("group", 0), int)
+                and 0 <= entry.get("group", 0) < 20
+            )
+        ]
         if not tabs:
             return
-        
+
         # --- 2. Recreate the split layout --- #
-        # Tab gourps are created lazily by MultiTabView; to place tab into group 2 we must make sure 
-        # groups 0..2 exist first. _create_group() is techincally private - optionally rename it to 
-        # create_group() in multi_tab_view.py and update this call 
+        # Tab gourps are created lazily by MultiTabView; to place tab into group 2 we must make sure
+        # groups 0..2 exist first. _create_group() is techincally private - optionally rename it to
+        # create_group() in multi_tab_view.py and update this call
         # (plus its two internal callers) to keep things clean.
         max_group = max(entry["group"] for entry in tabs)
         while len(self.tab_view.groups()) <= max_group:
             self.tab_view._create_group()
         groups = list(self.tab_view.groups())
-        
+
         # --- 2. Reopen every tab --- #
         active_editor = None
         for entry in tabs:
             path = Path(entry["path"])
             if not path.is_file():
-                continue # delete/move since last session - skip it
-            
+                continue  # delete/move since last session - skip it
+
             # set_new_tab() branches on self.python_editor_active to choose PythonEditor vs MarkdownEditor.
             # Setting it per file restores each tab in the mode it was last edited with.
             editor = self.set_new_tab(
@@ -2795,17 +2805,16 @@ class MainWindow(QMainWindow):
             )
             if editor is not None and session.get("active") == str(path):
                 active_editor = editor
-            
+
         # --- 3. Restore the global mode + focus --- #
         # The global flag governs NEW tabs opened after startup, so it refelcts
         # the mode the app was in at close time.
         self.python_editor_active = session.get("python_mode", False)
-        
+
         if active_editor is not None:
             self.tab_view.focus_editor(active_editor)
-        
+
         self.statusBar().showMessage(f"Restore {len(tabs)} tabs from last session", 5000)
-        
 
     def check_for_updates(self):
         """
@@ -2832,6 +2841,7 @@ class MainWindow(QMainWindow):
                     data = json.loads(response.read().decode("utf-8"))
 
                 from packaging.version import InvalidVersion, Version
+
                 latest_tag = data.get("tag_name", "")
                 try:
                     latest = Version(latest_tag.removeprefix("v"))
@@ -2848,8 +2858,11 @@ class MainWindow(QMainWindow):
                 else:
                     suffixes = (".appimage", ".deb", ".rpm", ".tar.gz")
                 download_url = next(
-                    (asset.get("browser_download_url", "") for asset in assets
-                     if asset.get("name", "").lower().endswith(suffixes)),
+                    (
+                        asset.get("browser_download_url", "")
+                        for asset in assets
+                        if asset.get("name", "").lower().endswith(suffixes)
+                    ),
                     data.get("html_url", ""),
                 )
                 if download_url:
@@ -2882,6 +2895,7 @@ class MainWindow(QMainWindow):
             # webbrowser.open opens the URL in the user's default browser
             # Docs: https://docs.python.org/3/library/webbrowser.html#webbrowser.open
             import webbrowser
+
             webbrowser.open(download_url)
 
 

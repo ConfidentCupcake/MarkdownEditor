@@ -39,8 +39,7 @@ END: Cython Metadata */
 #define CYTHON_FUTURE_DIVISION 1
 /* CModulePreamble */
 #include <stddef.h>
-#ifndef offsetof
-  #define offsetof(type, member) ( (size_t) & ((type*)0) -> member )
+#ifndef offsetof  #define offsetof(type, member) ( (size_t) & ((type*)0) -> member )
 #endif
 #if !defined(_WIN32) && !defined(WIN32) && !defined(MS_WINDOWS)
   #ifndef __stdcall
