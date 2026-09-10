@@ -284,7 +284,6 @@ class TerminalWidget(QWidget):
 
             # Send the line + newline to the process
             self.process.write((line + "\n").encode("utf-8"))
-            self.process.hide()
 
             # Update input start position
             self._input_start_pos = self.output.textCursor().position()
