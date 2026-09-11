@@ -1,5 +1,7 @@
 import shutil
-
+import sys
+import os
+from pathlib import Path
 # shutil.which("bash") returns:
 #   Linux: "usr/bin/bash" or "/bin/bash"
 #   Windows: None (bash not on PATH unless Git Bash is installed)
@@ -10,13 +12,11 @@ import shutil
 #   Linux: None
 #   macOS: None
 
-import sys
-import os
 from PyQt5.QtCore import Qt, QProcess, QProcessEnvironment, QEvent
 from PyQt5.QtGui import QFont, QTextCursor, QKeySequence
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPlainTextEdit,
-    QApplication, QPushButton, QLabel, QComboBox
+    QApplication, QPushButton, QLabel, QComboBox, QLineEdit
 )
 
 class TerminalWidget(QWidget):
@@ -34,13 +34,21 @@ class TerminalWidget(QWidget):
         - Zsh (macOS / Linux)
         - Fish (Linux)
     """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.process = QProcess(self)
+        self._shells = []
+        self._next_shell = None
+        self._stopping = False
         self._init_ui()
         self._connect_signals()
+
+        # Adding the first combo item changes currentIndex. Block signals so
+        # construction starts exactly one shell.
+        self.shell_combo.blockSignals(True)
         self._populate_shell_combo_method()
-        # Don't auto-start - let the user pick a shell or use the default
+        self.shell_combo.blockSignals(False)
         self._detect_and_start_default()
     
     def _init_ui(self):
@@ -91,34 +99,27 @@ class TerminalWidget(QWidget):
         
         # --- Terminal output/input are ---
         self.output = QPlainTextEdit()
-        self.output.setReadOnly(False)      # User can type directly
+        self.output.setReadOnly(True)
         self.output.setFont(QFont("Consolas", 12))
         self.output.setStyleSheet(
-        """
-        QPlainTextEdit {
-            background-color: #1e2127;
-            color: #abb2bf;
-            border: none;
-            padding: 4px;
-        }
-        """
+            "QPlainTextEdit { background:#1e2127; color:#abb2bf; border:none; padding:4px; }"
         )
         layout.addWidget(self.output)
 
-        # Intercept key presses on the output area
-        self.output.installEventFilter(self)
-        
-        # Track the position where the user's input starts
-        self._input_start_pos= 0
-    
+        self.input_line = QLineEdit()
+        self.input_line.setPlaceholderText("Enter a shell command")
+        self.input_line.setFont(QFont("Consolas", 12))
+        layout.addWidget(self.input_line)
+
     def _connect_signals(self):
         self.process.readyReadStandardOutput.connect(self._read_stdout)
         self.process.readyReadStandardError.connect(self._read_stderr)
         self.process.finished.connect(self._on_finished)
         self.process.stateChanged.connect(self._on_state_changed)
-        self.clear_btn.clicked.connect(self._clear)
+        self.clear_btn.clicked.connect(self.output.clear)
         self.restart_btn.clicked.connect(self._restart_shell)
         self.shell_combo.currentIndexChanged.connect(self._on_shell_changed)
+        self.input_line.returnPressed.connect(self._submit_input)
         
     def _on_shell_changed(self, index: int):
         """Called when the user selects a different shell from the dropdown."""
@@ -210,34 +211,58 @@ class TerminalWidget(QWidget):
             self._start_shell(shell_path, args)
         else:
             self._append_text("No shell detected on this system.\n")
-    
+
     def _start_shell(self, shell_path: str, args: list = None):
-        """Start a shell process with the given path and arguments."""
-        if args is None:
-            args = []
-            
-        # Stop existing shell process
+        """Queue a shell replacement without blocking the GUI thread."""
+        self._next_shell = (shell_path, list(args or []))
+        if self.process.state() != QProcess.NotRunning:
+            self._stopping = True
+            self.process.kill()
+            return
+        self._launch_next_shell()
+
+    def _launch_next_shell(self):
+        if self._next_shell is None:
+            return
+        shell_path, args = self._next_shell
+        self._next_shell = None
+        self._stopping = False
+
+        env = QProcessEnvironment.systemEnvironment()
+        # TERM describes output capabilities; it does not create a PTY.
+        # Use a conservative value for this pipe-based shell console.
+        if sys.platform != "win32":
+            env.insert("TERM", "dumb")
+        self.process.setProcessEnvironment(env)
+        self.process.setWorkingDirectory(str(Path.home()))
+        self.output.clear()
+        self.process.start(shell_path, args)
+
+    def _append_text(self, text: str):
+        """Append process output; user input lives in a different widget."""
+        cursor = self.output.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(text)
+        self.output.setTextCursor(cursor)
+        self.output.ensureCursorVisible()
+
+    def _submit_input(self):
+        if self.process.state() != QProcess.Running:
+            return
+        text = self.input_line.text()
+        self.input_line.clear()
+        self._append_text(f"> {text}\n")
+        self.process.write((text + "\n").encode("utf-8"))
+
+    def _clear(self):
+        self.output.clear()
+
+    def stop(self):
+        """Stop without waitForFinished; no replacement is launched."""
+        self._next_shell = None
+        self._stopping = True
         if self.process.state() != QProcess.NotRunning:
             self.process.kill()
-            self.process.waitForFinished(2000)
-            
-        # Build the environment for the shell
-        env = QProcessEnvironment.systemEnvironment()
-        
-        # On Linux, ensure TERM is set so the shell knows it's a terminal
-        # Without TERM, some shells don't show a prompt
-        if sys.platform != "win32":
-            if not env.value("TERM"):
-                env.insert("TERM", "xterm-256color")
-                
-        self.process.setProcessEnvironment(env)
-        self.process.setWorkingDirectory(os.path.expanduser("~"))
-        
-        # Clear the output area for the new shell session
-        self.output.clear()
-        self._input_start_pos = 0
-            
-        self.process.start(shell_path, args)
 
     def _read_stdout(self):
         data = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
@@ -246,93 +271,14 @@ class TerminalWidget(QWidget):
     def _read_stderr(self):
         data = bytes(self.process.readAllStandardError()).decode("utf-8", errors="replace")
         self._append_text(data)
-        
-        
-    def _append_text(self, text: str):
-        """Append text from the process to the output area."""
-        cursor = self.output.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        cursor.insertText(text)
-        self.output.setTextCursor(cursor)
-        self.output.ensureCursorVisible()
 
-        # Update the input start position
-        self._input_start_pos = cursor.position()
-
-    def eventFilter(self, obj, event):
-        """Intercept key presses on the output area and send them to the shell."""
-        if obj != self.output or event.type() != QEvent.KeyPress:
-            return super().eventFilter(obj, event)
-
-        if self.process.state() != QProcess.Running:
-            return True # block all input when process isn't running
-
-        cursor = self.output.textCursor()
-
-        if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-            cursor.movePosition(QTextCursor.End)
-            end_pos = cursor.position()
-
-            # Get all text from input_start to end
-            cursor.setPosition(self._input_start_pos)
-            cursor.setPosition(end_pos, QTextCursor.KeepAnchor)
-            line = cursor.selectedText()
-
-            # Insert a newline in the display
-            cursor.movePosition(QTextCursor.End)
-            cursor.insertText("\n")
-            self.output.setTextCursor(cursor)
-
-            # Send the line + newline to the process
-            self.process.write((line + "\n").encode("utf-8"))
-
-            # Update input start position
-            self._input_start_pos = cursor.position()
-            return True # consume the event
-
-        if event.matches(QKeySequence.Paste):
-            cursor.movePosition(QTextCursor.End)
-            cursor.insertText(QApplication.clipboard().text().replace("\r\n", "\n"))
-            self.output.setTextCursor(cursor)
-            return True
-
-        # Backspace -- only allow if cursor is past the input start position
-        if event.key() == Qt.Key.Key_Backspace:
-            if cursor.hasSelection():
-                if cursor.selectionStart() < self._input_start_pos:
-                    return True
-                cursor.removeSelectedText()
-            elif cursor.position() > self._input_start_pos:
-                cursor.deletePreviousChar()
-            self.output.setTextCursor(cursor)
-            return True # consume event
-
-        if event.key() == Qt.Key.Key_Delete:
-            if cursor.hasSelection() and cursor.selectionStart() < self._input_start_pos:
-                return True
-            if cursor.position() < self._input_start_pos:
-                return True
-            cursor.deleteChar()
-            self.output.setTextCursor(cursor)
-            return True
-
-        # Regular character -- insert it at cursor position
-        if event.text():
-            if cursor.hasSelection() and cursor.selectionStart() < self._input_start_pos:
-                cursor.clearSelection()
-            cursor.movePosition(QTextCursor.End)
-            cursor.insertText(event.text())
-            self.output.setTextCursor(cursor)
-            return True # consume the Event
-
-        # Let other keys (arrow keys, etc. pass through QPlainTextEdit
-        return False
-
-
-    def _on_finished(self, exit_code, exit_status):
-        self._append_text(f"\n[Process exited with code {exit_code}]\n")
-        self.status_label.setText("● Terminal Stopped")
-        self.status_label.setStyleSheet("color: #e06c75; font-size: 12px;")
+    def _on_finished(self, exit_code, _exit_status):
+        if not self._stopping:
+            self._append_text(f"\n[Process exited with code {exit_code}]\n")
+        self.status_label.setText("● Shell stopped")
+        self.status_label.setStyleSheet("color:#e06c75; font-size:12px;")
+        if self._next_shell is not None:
+            self._launch_next_shell()
 
     def _on_state_changed(self, state):
         if state == QProcess.Running:
@@ -341,13 +287,3 @@ class TerminalWidget(QWidget):
         else:
             self.status_label.setText("● Terminal Stopped")
             self.status_label.setStyleSheet("color: #e06c75; font-size: 12px;")
-
-    def _clear(self):
-        self.output.clear()
-        self._input_start_pos = 0
-
-    def stop(self):
-        """Kill the shell process."""
-        if self.process.state() != QProcess.NotRunning:
-            self.process.kill()
-            self.process.waitForFinished(2000)

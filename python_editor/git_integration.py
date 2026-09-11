@@ -32,10 +32,9 @@ class GitStatusChecker(QThread):
         self.start()
         
     def shutdown(self):
+        """Request shutdown without blocking the GUI thread."""
         self._shutting_down = True
         self.requestInterruption()
-        if self.isRunning():
-            self.wait(2000)
 
     def _git(self, *args, binary=False):
         """Run a git command in repo_path. Returns stdout or None."""

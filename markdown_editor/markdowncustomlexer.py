@@ -203,38 +203,44 @@ class MarkdownCustomLexer(NeutronLexer):
         return stripped[count:].strip() == ""
 
     def _state_before(self, full_text: str, start_char: int):
-        """Scan full_text[:start_char] line by line to determine whether the
-        character offset `start_char` sits inside a fenced code block. Returns
-        (in_code_fence, fence_char, fence_len). `start_char` is a CHARACTER
-        index (already converted from Scintilla's byte offset)."""
+        """Compute fence/comment state while continuing after closed comments."""
         prefix = full_text[:start_char]
         in_fence = False
         in_comment = False
         fence_char = None
         fence_len = 0
+
         for line in prefix.split("\n"):
-            if in_comment:
-                if "-->" in line:
+            cursor = 0
+            visible_parts = []
+            while cursor < len(line):
+                if in_comment:
+                    close = line.find("-->", cursor)
+                    if close < 0:
+                        cursor = len(line)
+                        break
                     in_comment = False
-                continue
-            if not in_fence and "<!--" in line:
-                if "-->" not in line.split("<!--", 1)[1]:
+                    cursor = close + 3
+                    continue
+                opening = line.find("<!--", cursor)
+                if opening < 0:
+                    visible_parts.append(line[cursor:])
+                    break
+                visible_parts.append(line[cursor:opening])
+                close = line.find("-->", opening + 4)
+                if close < 0:
                     in_comment = True
-                continue
-            c, n = self._fence_line(line)
-            if c is None:
+                    break
+                cursor = close + 3
+
+            visible = "".join(visible_parts)
+            char, count = self._fence_line(visible)
+            if char is None:
                 continue
             if not in_fence:
-                in_fence = True
-                fence_char = c
-                fence_len = n
-            else:
-                # A closing fence must be the same char, at least as long,
-                # and followed by only whitespace.
-                if c == fence_char and self._is_closing_fence(line, fence_char, fence_len):
-                    in_fence = False
-                    fence_char = None
-                    fence_len = 0
+                in_fence, fence_char, fence_len = True, char, count
+            elif char == fence_char and self._is_closing_fence(visible, fence_char, fence_len):
+                in_fence, fence_char, fence_len = False, None, 0
         return in_fence, fence_char, fence_len, in_comment
 
     # ------------------------------------------------------------------ #
@@ -321,53 +327,23 @@ class MarkdownCustomLexer(NeutronLexer):
 
     def styleText(self, start: int, end: int) -> None:
         full_text = self.editor.text()
-
-        # `start` / `end` are Scintilla BYTE offsets. Convert to character
-        # indices before touching the Unicode string.
         start_char = self._byte_pos_to_char_index(full_text, start)
         end_char = self._byte_pos_to_char_index(full_text, end)
-
-        # The only state that legitimately spans arbitrary restyle chunks is
-        # fenced-code-block context. Everything else resets per line.
-        in_fence, fence_char, fence_len, in_comment = self._state_before(
-            full_text, start_char
-        )
-
-        # If `start` lands in the middle of a line, the first segment we style is
-        # only a suffix of that line. We must NOT run block detection on it (a
-        # half-header would be misclassified), so we force inline styling for
-        # that first partial segment and start real block detection from the
-        # next full line.
+        in_fence, fence_char, fence_len, in_comment = self._state_before(full_text, start_char)
         partial_first = start_char > 0 and full_text[start_char - 1] != "\n"
 
-        # startStyling still takes the original BYTE offset for Scintilla.
         self.startStyling(start)
-        chunk = full_text[start_char:end_char]
-
-        lines = chunk.split("\n")
-        last_idx = len(lines) - 1
-        for idx, line in enumerate(lines):
-            force_inline = partial_first and idx == 0
-            if in_comment:
-                self._style_plain_line(line, self.COMMENTS)
-                if "-->" in line:
-                    in_comment = False
-            elif not in_fence and "<!--" in line:
-                self._style_plain_line(line, self.COMMENTS)
-                in_comment = "-->" not in line.split("<!--", 1)[1]
-            else:
-            # `line` is a Python str here; generate_token() computes UTF-8 byte
-            # lengths for each token, so setStyling() stays byte-correct even
-            # for multibyte content.
-                in_fence, fence_char, fence_len = self._style_line(
-                    line,
-                    in_fence,
-                    fence_char,
-                    fence_len,
-                    force_inline=force_inline,
-                )
-            if idx != last_idx:
-                # Style the "\n" separator that split() removed.
+        lines = full_text[start_char:end_char].split("\n")
+        for index, line in enumerate(lines):
+            in_fence, fence_char, fence_len, in_comment = self._style_line_with_comments(
+                line,
+                in_fence,
+                fence_char,
+                fence_len,
+                in_comment,
+                force_inline=partial_first and index == 0,
+            )
+            if index != len(lines) - 1:
                 self.setStyling(1, self.DEFAULT)
 
     # ------------------------------------------------------------------ #
@@ -578,6 +554,38 @@ class MarkdownCustomLexer(NeutronLexer):
         # rest inline
         self._style_inline()
 
+    def _style_line_with_comments(
+        self, line, in_fence, fence_char, fence_len, in_comment, force_inline
+    ):
+        """Style only comment spans, then resume Markdown for surrounding text."""
+        cursor = 0
+        while cursor < len(line):
+            if in_comment:
+                close = line.find("-->", cursor)
+                end = len(line) if close < 0 else close + 3
+                self._style_plain_line(line[cursor:end], self.COMMENTS)
+                cursor = end
+                if close < 0:
+                    return in_fence, fence_char, fence_len, True
+                in_comment = False
+                continue
+
+            opening = line.find("<!--", cursor)
+            end = len(line) if opening < 0 else opening
+            if end > cursor:
+                in_fence, fence_char, fence_len = self._style_line(
+                    line[cursor:end],
+                    in_fence,
+                    fence_char,
+                    fence_len,
+                    force_inline=force_inline or cursor > 0,
+                )
+            if opening < 0:
+                return in_fence, fence_char, fence_len, False
+            cursor = opening
+            in_comment = True
+        return in_fence, fence_char, fence_len, in_comment
+    
     def _maybe_style_task_marker(self):
         """If the upcoming tokens form `[ ]` or `[x]`/`[X]`, style them as
         TASK_MARKER. Tokens: '[' (' '|'x'|'X') ']'."""

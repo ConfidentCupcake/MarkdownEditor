@@ -256,51 +256,23 @@ class RuffLspController(QObject):
         """Phase-one placeholder; LSP codeAction handling is added later."""
         # Return False so PythonEditor keeps showing the normal QScintilla menu.
         return False
-    
-    def _on_ruff_diagnostics(self, editor, diagnostics: list):
-        """
-        C4+C2: cat reacts to Ruff errors; XP when the last one clears.
-        
-        EDGE-TRIGGERED by design: reacts only to transitions (clean -> dirty, dirty -> clean),
-        stashing the previous state on the editor. A level-triggered version would re-alert on 
-        every keystroke while an error exists - the cat would vibrate while you edit a broke line.
-        Same pattern as the lexer's in_string state: remember, then compare.
-        
-        :param editor: the editor the diagnostics belong to
-        :param diagnostics: current diagnostic list (truhly = has errors)
-        """
-        
-        had_errors = getattr(editor, "_had_ruff_errors", False)
-        has_errors = bool(diagnostics)
-        
-        if has_errors and not had_errors:
-            self.cat.set_state("alert", 2000)
-        elif not has_errors and had_errors:
-            self.cat.add_xp(5)
-            self.cat.set_state("stretch", 1500)
-            
-        editor._had_ruff_errors = has_errors
 
     def shutdown(self):
         """Stop synchronization, tell Ruff the tab is closed, clear visuals."""
         if self._closed:
             return
-
         self._closed = True
         self.change_timer.stop()
-
         # didClose is sent only after didOpen; otherwise the server has never
         # heard about this document and closing it would be meaningless.
         if self._opened:
             self.client.close_document(self.uri)
-
         try:
             self.client.server_ready.disconnect(self.open_document)
             self.client.server_stopped.disconnect(self._on_server_stopped)
             self.client.diagnostics_published.disconnect(self._on_diagnostics_published)
         except TypeError:
             pass
-
         self.view.clear()
 
         

@@ -1,4 +1,6 @@
 import sys
+import re
+
 from pathlib import Path
 
 from PyQt5.Qsci import QsciAPIs, QsciScintilla
@@ -22,6 +24,7 @@ SCI_AUTOCACTIVE = 2102
 class PythonEditor(QsciScintilla):
     goto_definition_requested = pyqtSignal(str, int, int)
     focused = pyqtSignal(object)
+    shutdown_complete = pyqtSignal(object)
 
     def __init__(self, parent=None, path: Path = None, is_python_file: bool = True, ruff_lsp_client = None):
         super().__init__(parent)
@@ -423,20 +426,14 @@ class PythonEditor(QsciScintilla):
         if self.is_python_file and e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and e.modifiers() == Qt.KeyboardModifier.NoModifier and not self.hasSelectedText():
             self._handle_python_return()
             return
-                
+
         if e.text() == "(" and self.is_python_file and not self._shutting_down:
-            # Check if the character before '(' is a word character
-            # (meaning the user typed "function_name(")
             line, index = self.getCursorPosition()
-            if index > 0:
-                # Get the text on the current line before the cursor
-                line_text = self.text(line)
-                before = line_text[:index].rstrip()
-                if before and before[-1].isidentifier():
-                    # The user typed "something(" - trigger signature helper
-                    QTimer.singleShot(50, self._trigger_signature_help)
-                        # QTimer.singleShot(50, ...) delays by 50 ms so the '(' character is actually inserted before we query Jedi.
-                        # Without this delay, the cursor position hasn't updated yet
+            before = self.text(line)[:index].rstrip()
+            # Validate the complete trailing identifier, not only its last
+            # character. Digits are legal after the first identifier character.
+            if re.search(r"(?:^|\.)[A-Za-z_]\w*$", before):
+                QTimer.singleShot(50, self._trigger_signature_help)
 
         return super().keyPressEvent(e)
 
@@ -534,32 +531,45 @@ class PythonEditor(QsciScintilla):
         if not self._shutting_down:
             print("Autocomplete error:", err)
 
+    def _analysis_workers(self):
+        """Return every per-editor QThread that must outlive the tab."""
+        names = (
+            "auto_completer",
+            "definition_finder",
+            "hover_helper",
+            "signature_helper",
+        )
+        return [getattr(self, name) for name in names if hasattr(self, name)]
+
     def shutdown(self):
+        """Stop producing results and emit when all workers naturally finish."""
+        if self._shutting_down:
+            return
         self._shutting_down = True
         self._loading_text = True
-        
-        # Sends didClose and clears only this document's QScintilla indicators.
-        # It does NOT shut down the shared RuffLspClient owned by MainWindow.
+        self._autocomplete_timer.stop()
+        for timer_name in ("_hover_timer", "_ruff_hover_timer"):
+            timer = getattr(self, timer_name, None)
+            if timer is not None:
+                timer.stop()
+
         if self.ruff_lsp is not None:
             self.ruff_lsp.shutdown()
-            
-        if hasattr(self, "auto_completer"):
+
+        workers = self._analysis_workers()
+        for worker in workers:
+            worker.shutdown()
             try:
-                self.auto_completer.completions_ready.disconnect(self._apply_completions)
+                worker.finished.connect(self._check_shutdown_complete)
             except TypeError:
                 pass
-            try:
-                self.auto_completer.error.disconnect(self._handle_completion_error)
-            except TypeError:
-                pass
-            self.auto_completer.shutdown()
-        if hasattr(self, "definition_finder"):
-            self.definition_finder.shutdown()
-        if hasattr(self, "hover_helper"):
-            self.hover_helper.shutdown()
-        if hasattr(self, "signature_helper"):
-            self.signature_helper.shutdown()
+        self._check_shutdown_complete()
+
+    def _check_shutdown_complete(self):
+        """Signals exactly when no owned worker is still executing."""
+        if self._shutting_down and not any(worker.isRunning() for worker in self._analysis_workers()):
+            self.shutdown_complete.emit(self)
 
     def closeEvent(self, event):
         self.shutdown()
-        super().closeEvent(event)
+        event.accept()

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import traceback
 from pathlib import Path
+from packaging.version import InvalidVersion, Version
 
 import bleach
 import hashlib
@@ -116,11 +117,13 @@ def resource_path(relative_path):
 
 class MainWindow(QMainWindow):
     update_available = pyqtSignal(str, str)
+    update_check_finished = pyqtSignal(bool, str)
     WIDTH = 1400
     HEIGHT = 900
 
     def __init__(self):
         super().__init__()
+        self.update_check_finished.connect(self._show_update_check_result)
         self._dirty_editors = set()
         self.python_runner = PythonRunner(self)
         self.settings = QSettings("CodeEditor", "CodeEditor")
@@ -130,6 +133,9 @@ class MainWindow(QMainWindow):
         self.recent_files = self.settings.value("recent_files", [], type=list)
         self.ruff_save_mode = self.settings.value("ruff_save_mode", "safe_format", type=str)
         self.update_available.connect(self._show_update_dialog)
+        # retirement statement of all the Python workers
+        self._retired_editors = set()
+
 
         # Detect if running as a bundled exe
         if hasattr(sys, "_MEIPASS"):
@@ -316,7 +322,7 @@ class MainWindow(QMainWindow):
 
         self.show()
 
-        QTimer.singleShot(2000, self.check_for_updates)
+        QTimer.singleShot(2000, lambda: self.check_for_updates(manual=False))
 
         # --- idle choreography: sleepy -> box -> sleep ------------------ #
         # Escalation ladder: 60 s idle = yawn; 3 min = deep sleep; 10 min =
@@ -592,7 +598,7 @@ class MainWindow(QMainWindow):
         if isinstance(editor, PythonEditor):
             editor.goto_definition_requested.connect(self._open_file_at_position)
             if editor.ruff_lsp is not None:
-                editor.ruff_lsp.diagnostics_changed(self._on_ruff_diagnostics_changed)
+                editor.ruff_lsp.diagnostics_changed.connect(self._on_ruff_diagnostics)
 
     def _cat_unbox(self):
         """
@@ -608,7 +614,7 @@ class MainWindow(QMainWindow):
         print(f"Ruff LSP error {message}")
         self.statusBar().showMessage(message, 8000)
 
-    def _on_ruff_diagnostics_changed(self, editor, diagnostics: list):
+    def _on_ruff_diagnostics(self, editor, diagnostics: list):
         """React once when a Python tab enters or leaves an error state."""
         had_errors = getattr(self, "_had_ruff_erroes", False)
         has_errors = bool(diagnostics)
@@ -918,7 +924,7 @@ class MainWindow(QMainWindow):
         help_menu = menu_bar.addMenu("Help")
 
         check_updates_action = help_menu.addAction("Check for Updates")
-        check_updates_action.triggered.connect(self.check_for_updates)
+        check_updates_action.triggered.connect(lambda: self.check_for_updates(manual=True))
 
     def split_current_editor_right(self):
         editor = self.current_editor()
@@ -952,39 +958,7 @@ class MainWindow(QMainWindow):
         editor.ensureLineVisible(line)
         editor.setFocus()
 
-    def run_with_arguments(self):
-        """Save the current file, ask for arguments, then run it."""
-        editor = self.current_editor()
-        if editor is None:
-            return
 
-        path = getattr(editor, "path", None)
-        if path is None:
-            if not self.save_as():
-                return
-            path = getattr(editor, "path", None)
-        elif not self.save_file():
-            self.statusBar().showMessage("Run cancelled: save failed", 4000)
-            return
-
-        # QInputDialog.getText shows a dialog with a single text input.
-        # Parameters: parent, title, label, echo mode, default text
-        # Returns: (text, ok) where ok is True if user clicked OK
-        args, ok = QInputDialog.getText(
-            self,
-            "Run with Arguments",
-            "Command-line arguments",
-            QLineEdit.Normal,
-            "",
-        )
-        if not ok:
-            # User cancelled
-            return
-
-        # Show the console
-        self.console_dock.show()
-        # Run the file with the arguments
-        self.python_runner.run_file_with_args(Path(path), args, cwd=Path(path).parent)
 
     def save_all(self):
         saved_count = 0
@@ -1209,44 +1183,69 @@ class MainWindow(QMainWindow):
         else:
             self.console_dock.show()
 
-    def run_current_file(self):
-        """Save and run the current Python file"""
+    def _current_python_editor(self):
+        """Return a runnable Python editor or show one consistent message."""
         editor = self.current_editor()
+        if not isinstance(editor, PythonEditor):
+            self.statusBar().showMessage("Run commands are available only for Python files", 3000)
+            return None
+        return editor
+
+    def run_with_arguments(self):
+        editor = self._current_python_editor()
         if editor is None:
             return
-
-        path = getattr(editor, "path", None)
-        if path is None:
-            # Untitled file -> need to save first
+        if editor.path is None:
             if not self.save_as():
                 return
-            path = getattr(editor, "path", None)
-            if path is None:
-                return  # User cancelled the sace dialog
-
+            editor = self.current_editor()
+            if not isinstance(editor, PythonEditor) or editor.path is None:
+                return
         elif not self.save_file():
             self.statusBar().showMessage("Run cancelled: save failed", 4000)
             return
 
-        # Show the console
+        args, accepted = QInputDialog.getText(
+            self,
+            "Run with Arguments",
+            "Command-line arguments",
+            QLineEdit.Normal,
+            "",
+        )
+        if not accepted:
+            return
         self.console_dock.show()
+        path = Path(editor.path)
+        self.python_runner.run_file_with_args(path, args, cwd=path.parent)
 
-        # Run the file
-        self.python_runner.run_file(Path(path), cwd=Path(path).parent)
-
-    def run_selection(self):
-        """Run just the selected text in the current editor."""
-        editor = self.current_editor()
+    def run_current_file(self):
+        editor = self._current_python_editor()
         if editor is None:
             return
+        if editor.path is None:
+            if not self.save_as():
+                return
+            editor = self.current_editor()
+            if not isinstance(editor, PythonEditor) or editor.path is None:
+                return
+        elif not self.save_file():
+            self.statusBar().showMessage("Run cancelled: save failed", 4000)
+            return
 
-        # Get selected text from QsciScintilla
+        self.console_dock.show()
+        path = Path(editor.path)
+        self.python_runner.run_file(path, cwd=path.parent)
+
+    def run_selection(self):
+        editor = self._current_python_editor()
+        if editor is None:
+            return
         selected_text = editor.selectedText()
         if not selected_text:
             return
-
+        cwd = Path(editor.path).parent if editor.path is not None else Path.cwd()
         self.console_dock.show()
-        self.python_runner.run_code(selected_text)
+        self.python_runner.run_code(selected_text, cwd=cwd)
 
     def choose_interpreter(self):
         """Let the user pick a Python executable."""
@@ -1801,22 +1800,34 @@ class MainWindow(QMainWindow):
         search_input = QLineEdit()
         search_input.setPlaceholderText("Search")
         search_input.setFont(self.window_font)
-        search_input.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        self.search_checkbox = QCheckBox("Search in Modules")
-        self.search_checkbox.setFont(self.window_font)
-        self.search_checkbox.setStyleSheet("color: white; margin-bottom: 10px;")
+        self.search_checkbox = QCheckBox("Include hidden module folders")
+        self.search_regex_checkbox = QCheckBox("Regex")
+        self.search_case_checkbox = QCheckBox("Case sensitive")
+        for checkbox in (
+            self.search_checkbox,
+            self.search_regex_checkbox,
+            self.search_case_checkbox,
+        ):
+            checkbox.setFont(self.window_font)
 
         self.search_worker = SearchWorker()
         self.search_worker.results_ready.connect(self.search_finished)
+        self.search_worker.search_error.connect(self.search_failed)
 
-        search_input.textChanged.connect(
-            lambda text: self.search_worker.update(
-                text,
-                self.file_manager.model.rootDirectory().absolutePath(),
+        def request_search():
+            self.search_worker.update(
+                search_input.text(),
+                self.file_manager.model.rootPath(),
                 self.search_checkbox.isChecked(),
+                self.search_regex_checkbox.isChecked(),
+                self.search_case_checkbox.isChecked(),
             )
-        )
+
+        search_input.textChanged.connect(lambda _text: request_search())
+        self.search_checkbox.toggled.connect(lambda _on: request_search())
+        self.search_regex_checkbox.toggled.connect(lambda _on: request_search())
+        self.search_case_checkbox.toggled.connect(lambda _on: request_search())
 
         self.search_list_view = QListWidget()
         self.search_list_view.setFont(QFont("sans-serif", 13))
@@ -1973,18 +1984,27 @@ class MainWindow(QMainWindow):
     def set_cursor_arrow(self, e):
         self.setCursor(Qt.ArrowCursor)
 
-    def search_finished(self, generation, items):
+    def search_finished(self, generation, items, truncated):
         if generation != self.search_worker.generation:
             return
         self.search_list_view.clear()
-        for i in items:
-            self.search_list_view.addItem(i)
+        for item in items:
+            self.search_list_view.addItem(item)
+        if truncated:
+            self.statusBar().showMessage(f"Search limited to {len(items)} results", 4000)
+
+    def search_failed(self, generation, message):
+        if generation == self.search_worker.generation:
+            self.search_list_view.clear()
+            self.statusBar().showMessage(f"Invalid search: {message}", 4000)
 
     def search_list_view_clicked(self, item: SearchItem):
         editor = self.set_new_tab(Path(item.full_path))
         if editor is None:
             return
-        editor.setCursorPosition(item.lineno, item.end)
+        editor.setSelection(item.lineno, item.start, item.lineno, item.end)
+        editor.setCursorPosition(item.lineno, item.start)
+        editor.ensureLineVisible(item.lineno)
         editor.setFocus()
 
     def close_editor(self, editor):
@@ -2013,16 +2033,32 @@ class MainWindow(QMainWindow):
 
         self._dirty_editors.discard(editor)
         self.tab_view.remove_editor(editor)
-
-        if hasattr(editor, "shutdown"):
-            editor.shutdown()
-
-        editor.setParent(None)
-        editor.deleteLater()
+        
+        self._dispose_editor(editor)
 
         self.render_preview()
         return True
-
+    
+    def _dispose_editor(self, editor):
+        """Delete now, or retain a Python editor until its workers finish."""
+        if isinstance(editor, PythonEditor):
+            self._retired_editors.add(editor)
+            editor.setParent(None)
+            editor.shutdown_complete.connect(self._finalize_retired_editor)
+            editor.shutdown()
+            editor._check_shutdown_complete()
+            return 
+        editor.shutdown()
+        editor.setParent(None)
+        editor.deleteLater()
+        
+    def _finalize_retired_editor(self, editor):
+        """Release a retired editor only after all QThreads stopped."""
+        if editor not in self._retired_editors:
+            return 
+        self._retired_editors.remove(editor)
+        editor.deleteLater()
+    
     def on_file_rename(self, old_path: Path, new_path: Path, is_directory=False):
         """Relocate every affected tab while preserving one-path ownership."""
         old_path = Path(old_path)
@@ -2075,37 +2111,51 @@ class MainWindow(QMainWindow):
             if editor is self.current_editor():
                 self.current_file = updated_path
 
-    def close_editors_for_path(self, target_path: Path, is_directory: bool = False):
-        """
-        Close open editors affected by deletion.
-
-        Returns True when all affected editors closed successfully.
-        Returns False when the uder cancels an unsaved-changes prompt.
-        """
-
-        target_path = Path(target_path)
-
-        affected_editors = []
-
-        target_path = target_path.resolve()
+    def editors_for_path(self, target_path: Path, is_directory=False):
+        target = Path(target_path).resolve()
+        result = []
         for editor in self.tab_view.all_editors():
-            editor_path = getattr(editor, "path", None)
-            if editor_path is None:
+            path = getattr(editor, "path", None)
+            if path is None:
                 continue
-            editor_path = Path(editor_path).resolve()
+            editor_path = Path(path).resolve()
+            affected = (
+                editor_path == target or target in editor_path.parents
+                if is_directory
+                else editor_path == target
+            )
+            if affected:
+                result.append(editor)
+        return result
 
-            if is_directory:
-                is_affected = editor_path == target_path or target_path in editor_path.parents
-            else:
-                is_affected = editor_path == target_path
-
-            if is_affected:
-                affected_editors.append(editor)
-
-        for editor in affected_editors:
-            if not self.close_editor(editor):
+    def can_close_editors_for_path(self, target_path, is_directory=False):
+        """Collect save/discard decisions without removing tabs."""
+        for editor in self.editors_for_path(target_path, is_directory):
+            if editor not in self._dirty_editors:
+                continue
+            self.tab_view.focus_editor(editor)
+            name = Path(editor.path).name
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                f"Save changes to '{name}'?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Cancel:
                 return False
+            if reply == QMessageBox.Save and not self.save_file():
+                return False
+        return True
 
+    def close_editors_for_path(self, target_path, is_directory=False, prompt=True):
+        editors = self.editors_for_path(target_path, is_directory)
+        if prompt and not self.can_close_editors_for_path(target_path, is_directory):
+            return False
+        for editor in editors:
+            self._dirty_editors.discard(editor)
+            self.tab_view.remove_editor(editor)
+            self._dispose_editor(editor)
         return True
 
     def show_hide_tab(self, e, type_):
@@ -2116,8 +2166,10 @@ class MainWindow(QMainWindow):
         }
         # Update icoon states. Reset all to gray, then set active to blue
         icon_map = {
-            "folder": (resource_path("icons/folder.png"), resource_path("icons/folder-active.png")),
-            "search": (resource_path("icons/search.png"), resource_path("icons/search-active.png")),
+            "folder": (resource_path("icons/folder.png"), resource_path(
+                "icons/folder-active.png")),
+            "search": (resource_path("icons/search.png"), resource_path(
+                "icons/search-active.png")),
             "outline": (
                 resource_path("icons/code.png"),
                 resource_path("icons/code-active.png"),
@@ -2527,7 +2579,7 @@ class MainWindow(QMainWindow):
     def _on_preview_loaded(self, ok):
         """Enable rendering only when the fixed preview shell loads."""
         self._preview_ready = bool(ok)
-        if self.preview_ready:
+        if self._preview_ready:
             self.render_preview()
         else:
             self.statusBar().showMessage("Markdown preview failed to load.", 4000)
@@ -2592,11 +2644,8 @@ class MainWindow(QMainWindow):
         if was_dirty:
             self._dirty_editors.discard(old)
             self._dirty_editors.add(new_editor)
-        if hasattr(old, "shutdown"):
-            old.shutdown()
-        old.setParent(None)
-        old.deleteLater()
-
+            self._dispose_editor(old)
+            
         new_editor.setCursorPosition(line, column)
         if selection[0] >= 0:
             new_editor.setSelection(*selection)
@@ -2625,162 +2674,218 @@ class MainWindow(QMainWindow):
         self.find_bar.set_search_text(selected)
         self.find_bar.show_replace()
         self._position_find_bar()
+        
+    @staticmethod
+    def _compile_find_pattern(text, case_sensitive, whole_word, regex):
+        expression = text if regex else re.escape(text)
+        if whole_word:
+            expression = rf"\b(?:{expression})\b"
+        flags = 0 if case_sensitive else re.IGNORECASE
+        return re.compile(expression, flags)
 
+    @staticmethod
+    def _offset_to_line_column(source: str, offset: int):
+        prefix = source[:offset]
+        line = prefix.count("\n")
+        previous_newline = prefix.rfind("\n")
+        column = offset if previous_newline < 0 else offset - previous_newline - 1
+        return line, column
+
+    @staticmethod
+    def _line_column_to_offset(source: str, line: int, column: int) -> int:
+        lines = source.splitlines(True)
+        line = max(0, min(line, max(0, len(lines) - 1)))
+        return sum(len(part) for part in lines[:line]) + max(0, column)
+
+    def _select_python_match(self, editor, match):
+        source = editor.text()
+        start_line, start_column = self._offset_to_line_column(source, match.start())
+        end_line, end_column = self._offset_to_line_column(source, match.end())
+        editor.setSelection(start_line, start_column, end_line, end_column)
+        editor.ensureLineVisible(start_line)
+        
     def _do_find_next(self, text, case_sensitive, whole_word, regex):
-        """Search forward from the current cursor position."""
         editor = self.current_editor()
         if editor is None:
             return
+        try:
+            pattern = self._compile_find_pattern(
+                text, case_sensitive, whole_word, regex
+            )
+        except re.error as error:
+            self.statusBar().showMessage(f"Invalid regex: {error}", 4000)
+            return
 
-        line, index = editor.getCursorPosition()
-        # getCursorPosition returns (line, index) as a tuple
-        # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a2d0e8b6e0a3e3a9c0e3a3e3a3e3a3e3a
-
-        editor.findFirst(
-            text,  # the search string or regex
-            regex,  # is it a regex?
-            case_sensitive,  # case-sensitive?
-            whole_word,  # whole-word match only?
-            True,  # wrap around to top when reaching bottom?
-            True,  # search forward?
-            line,  # start line
-            index,  # start column
-            True,  # show the match (scroll to it)?
-            False,  # POSIX regex mode (False = use Python regex)
-        )
+        source = editor.text()
+        if editor.hasSelectedText():
+            _line_from, _column_from, line, column = editor.getSelection()
+        else:
+            line, column = editor.getCursorPosition()
+        cursor_offset = self._line_column_to_offset(source, line, column)
+        match = pattern.search(source, cursor_offset) or pattern.search(source, 0, cursor_offset)
+        if match:
+            self._select_python_match(editor, match)
 
     def _do_find_prev(self, text, case_sensitive, whole_word, regex):
         """Search backward from the current cursor position."""
         editor = self.current_editor()
         if editor is None:
             return
-
-        line, index = editor.getCursorPosition()
+        try:
+            pattern = self._compile_find_pattern(
+                text, case_sensitive, whole_word, regex
+            )
+        except re.error as error:
+            self.statusBar().showMessage(f"invallid regex: {error}", 4000)
+            return
+        source = editor.text()
         if editor.hasSelectedText():
-            line, index, _line_to, _index_to = editor.getSelection()
-        if index > 0:
-            index -= 1
-        elif line > 0:
-            line -= 1
-            index = max(0, editor.lineLength(line) - 1)
+            line, column, _line_to, _column_to = editor.getSelection()
         else:
-            line, index = -1, -1
-
-        editor.findFirst(
-            text,
-            regex,
-            case_sensitive,
-            whole_word,
-            True,  # wrap around
-            False,  # search BACKWARD
-            line,
-            index,
-            True,  # show the match
-            False,
-        )
+            line, column = editor.getCursorPosition()
+        cursor_offset = self._line_column_to_offset(source, line, column)
+        matches = list(pattern.finditer(source, 0, cursor_offset))
+        if not matches:
+            matches = list(pattern.finditer(source, cursor_offset))
+        if matches:
+            self._select_python_match(editor, matches[-1])
 
     def _do_replace(self, find_text, replace_text, case_sensitive, whole_word, regex):
-        """Replace the currently selected match, then find the next one."""
         editor = self.current_editor()
         if editor is None:
             return
-        selected = editor.selectedText() if editor.hasSelectedText() else ""
-        flags = 0 if case_sensitive else re.IGNORECASE
-        pattern = find_text if regex else re.escape(find_text)
-        if whole_word:
-            pattern = rf"\b(?:{pattern})\b"
         try:
-            matches = bool(selected) and re.fullmatch(pattern, selected, flags) is not None
-        except re.error:
-            matches = False
-        if matches:
-            editor.replace(replace_text)
-            # replace() swaps the currently selected Tect with replace_text
-            # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a
-        # Find the next match
-        self._do_find_next(find_text, case_sensitive, whole_word, regex)
+            pattern = self._compile_find_pattern(
+                find_text, case_sensitive, whole_word, regex
+            )
+        except re.error as error:
+            self.statusBar().showMessage(f"Invalid regex: {error}", 4000)
+            return
+
+        selected = editor.selectedText() if editor.hasSelectedText() else ""
+        match = pattern.fullmatch(selected) if selected else None
+        if match:
+            replacement = match.expand(replace_text) if regex else replace_text
+            editor.replace(replacement)
+        self._do_find_next(
+            find_text, case_sensitive, whole_word, regex
+        )
 
     def _do_replace_all(self, find_text, replace_text, case_sensitive, whole_word, regex):
-        """Replace all occurrences in the current document."""
         editor = self.current_editor()
         if editor is None:
             return
-        if regex:
+        try:
+            pattern = self._compile_find_pattern(
+                find_text, case_sensitive, whole_word, regex
+            )
+        except re.error as error:
+            self.statusBar().showMessage(f"Invalid regex: {error}", 4000)
+            return
+        if pattern.match("") is not None:
+            self.statusBar().showMessage(
+                "Zero-length regex cannot be replaced", 4000
+            )
+            return
+
+        source = editor.text()
+        matches = list(pattern.finditer(source))
+        count = len(matches)
+        if matches:
+            # Replace from the end so earlier offsets remain valid. Using
+            # QScintilla selection/replace keeps the whole operation undoable.
+            editor.beginUndoAction()
             try:
-                if re.compile(find_text).match("") is not None:
-                    self.statusBar().showMessage("Zero-length regex cannot be replaced", 4000)
-                    return
-            except re.error:
-                return
+                for match in reversed(matches):
+                    start_line, start_column = self._offset_to_line_column(
+                        source, match.start()
+                    )
+                    end_line, end_column = self._offset_to_line_column(
+                        source, match.end()
+                    )
+                    editor.setSelection(
+                        start_line, start_column, end_line, end_column
+                    )
+                    replacement = (
+                        match.expand(replace_text) if regex else replace_text
+                    )
+                    editor.replace(replacement)
+            finally:
+                editor.endUndoAction()
+        self.statusBar().showMessage(f"Replaced {count} occurrences", 3000)
 
-        # Move cursor to the start of the Document
-        # sendScintilla sends a raw Scintilla message
-        # SCI_DOCUMENTSTART = 2318 moves the cursor to position 0
-        # Docs: https://www.scintilla.org/ScintillaDoc.html#SCI_DOCUMENTSTART
-        editor.setCursorPosition(0, 0)
-
-        count = 0
-        found = editor.findFirst(
-            find_text,
-            regex,
-            case_sensitive,
-            whole_word,
-            False,  # don't warp. We start from the top then go down
-            True,  # forward
-            0,
-            0,  # start at line 0, col 0
-            True,
-            False,
+    def _background_work_running(self) -> bool:
+        git_worker = getattr(getattr(self, "file_manager", None), "git_checker", None)
+        search_worker = getattr(self, "search_worker", None)
+        runner = getattr(self, "python_runner", None)
+        ruff = getattr(self, "ruff_lsp_client", None)
+        terminal = getattr(self, "terminal", None)
+        return bool(
+            self._retired_editors
+            or (git_worker is not None and git_worker.isRunning())
+            or (search_worker is not None and search_worker.isRunning())
+            or (runner is not None and runner.is_running())
+            or (ruff is not None and ruff.process.state() != QProcess.NotRunning)
+            or (terminal is not None and terminal.process.state() != QProcess.NotRunning)
         )
-        while found:
-            editor.replace(replace_text)
-            count += 1
-            # findNext continues from where the last match was
-            # Docs: https://www.riverbankcomputing.com/static/Docs/QScintilla/classQsciScintilla.html#a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a
-            found = editor.findNext()
-        self.statusBar().showMessage(f"Replace {count} occurrences", 3000)
+
+    def _finish_pending_close(self):
+        if self._background_work_running():
+            QTimer.singleShot(100, self._finish_pending_close)
+            return
+        self._close_ready = True
+        self.close()
 
     def closeEvent(self, event):
-        for editor in list(self.tab_view.all_editors()):
-            if editor not in self._dirty_editors:
-                continue
-            self.tab_view.focus_editor(editor)
-            path = getattr(editor, "path", None)
-            name = Path(path).name if path is not None else "Untitled"
-            reply = QMessageBox.question(
-                self,
-                "Unsaved Changes",
-                f"Save Changes to '{name}'?",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save,
-            )
-            if reply == QMessageBox.Cancel:
-                event.ignore()
-                return
-            if reply == QMessageBox.Save and not self.save_file():
-                event.ignore()
-                return
+        if getattr(self, "_close_ready", False):
+            event.accept()
+            return super().closeEvent(event)
 
-        self.save_session()
+        if not getattr(self, "_close_prompts_complete", False):
+            for editor in list(self.tab_view.all_editors()):
+                if editor not in self._dirty_editors:
+                    continue
+                self.tab_view.focus_editor(editor)
+                path = getattr(editor, "path", None)
+                name = Path(path).name if path is not None else "Untitled"
+                reply = QMessageBox.question(
+                    self,
+                    "Unsaved Changes",
+                    f"Save changes to '{name}'?",
+                    QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                    QMessageBox.Save,
+                )
+                if reply == QMessageBox.Cancel:
+                    event.ignore()
+                    return
+                if reply == QMessageBox.Save and not self.save_file():
+                    event.ignore()
+                    return
+            self._close_prompts_complete = True
+            self.save_session()
+
         for editor in list(self.tab_view.all_editors()):
-            if hasattr(editor, "shutdown"):
-                editor.shutdown()
-        if hasattr(self, "terminal"):
-            self.terminal.stop()
-        if hasattr(self, "python_runner") and self.python_runner:
+            self.tab_view.remove_editor(editor)
+            self._dispose_editor(editor)
+
+        self.terminal.stop()
+        if hasattr(self.python_runner, "shutdown"):
+            self.python_runner.shutdown()
+        else:
+            # Compatibility until Fix 5 replaces PythonRunner.
             self.python_runner.stop()
-        # BUGFIX: was "hasattr(self, 'git_checker')" — that attribute
-        # never exists on MainWindow (the checker lives on the file
-        # manager), so the guard was always False and the git thread was
-        # never shut down: "QThread: Destroyed while thread is still
-        # running" on exit. Also moved BEFORE super().closeEvent() so
-        # shutdown finishes before the window widgets are torn down.
-        fm = getattr(self, "file_manager", None)
-        if fm is not None and hasattr(fm, "git_checker"):
-            fm.git_checker.shutdown()
-        if hasattr(self, "settings"):
-            self.settings.setValue("recent_files", self.recent_files)
         self.ruff_lsp_client.shutdown()
+        if hasattr(self.search_worker, "shutdown"):
+            self.search_worker.shutdown()
+        self.file_manager.git_checker.shutdown()
+        self.settings.setValue("recent_files", self.recent_files)
+
+        if self._background_work_running():
+            event.ignore()
+            QTimer.singleShot(100, self._finish_pending_close)
+            return
+
+        self._close_ready = True
         event.accept()
         super().closeEvent(event)
 
@@ -2922,69 +3027,65 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"Restore {len(tabs)} tabs from last session", 5000)
 
-    def check_for_updates(self):
-        """
-        Check GitHub Releases API for a newer version.
-        Runs in a background thread so it doesn't freeze the GUI.
-        """
+    def check_for_updates(self, manual=False):
+        """Check releases off-thread and report every manual outcome."""
         import json
         import threading
+        import urllib.error
         import urllib.request
 
         api_url = "https://api.github.com/repos/ConfidentCupcake/MarkdownEditor/releases/latest"
 
-        def _check():
-            try:
-                # Create a request with a User-Agent header
-                # GitHub's API requires a User-Agent header, otherwise it returns 403
-                # Docs: https://docs.github.com/en/rest/overview/resources-in-the-rest-api#user-agent-required
-                req = urllib.request.Request(api_url)
-                req.add_header("User-Agent", "MarkdownEditor")
+        def finish(message):
+            self.update_check_finished.emit(bool(manual), message)
 
-                # urlopen fetches the URL and returns a response object
-                # Docs: https://docs.python.org/3/library/urllib.request.html#urllib.request.urlopen
-                with urllib.request.urlopen(req, timeout=5) as response:
+        def check():
+            try:
+                request = urllib.request.Request(api_url, headers={"User-Agent": "MarkdownEditor"})
+                with urllib.request.urlopen(request, timeout=5) as response:
                     data = json.loads(response.read().decode("utf-8"))
 
-                from packaging.version import InvalidVersion, Version
-
-                latest_tag = data.get("tag_name", "")
-                try:
-                    latest = Version(latest_tag.removeprefix("v"))
-                    current = Version(APP_VERSION.removeprefix("v"))
-                except InvalidVersion:
-                    return
+                latest_tag = str(data.get("tag_name", ""))
+                latest = Version(latest_tag.removeprefix("v"))
+                current = Version(APP_VERSION.removeprefix("v"))
                 if latest <= current:
+                    finish(f"MarkdownEditor {APP_VERSION} is up to date.")
                     return
+
                 assets = data.get("assets") or []
-                if sys.platform == "win32":
-                    suffixes = (".exe", ".msi")
-                elif sys.platform == "darwin":
-                    suffixes = (".dmg", ".pkg", ".zip")
-                else:
-                    suffixes = (".appimage", ".deb", ".rpm", ".tar.gz")
-                download_url = next(
-                    (
-                        asset.get("browser_download_url", "")
-                        for asset in assets
-                        if asset.get("name", "").lower().endswith(suffixes)
-                    ),
-                    data.get("html_url", ""),
+                suffixes = (
+                    (".exe", ".msi")
+                    if sys.platform == "win32"
+                    else (".dmg", ".pkg", ".zip")
+                    if sys.platform == "darwin"
+                    else (".appimage", ".deb", ".rpm", ".tar.gz")
                 )
-                if download_url:
-                    self.update_available.emit(str(latest), download_url)
+                url = next(
+                    (
+                        str(asset.get("browser_download_url", ""))
+                        for asset in assets
+                        if str(asset.get("name", "")).lower().endswith(suffixes)
+                    ),
+                    str(data.get("html_url", "")),
+                )
+                if url:
+                    self.update_available.emit(str(latest), url)
+                else:
+                    finish("An update exists, but no download URL was provided.")
+            except (
+                OSError,
+                ValueError,
+                json.JSONDecodeError,
+                urllib.error.URLError,
+                InvalidVersion,
+            ) as error:
+                finish(f"Could not check for updates: {error}")
 
-            except Exception:
-                # Network error, timeout, or API rate limit — fail silently
-                # GitHub's API allows 60 requests/hour for unauthenticated requests
-                # Docs: https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limiting
-                pass
+        threading.Thread(target=check, daemon=True).start()
 
-        # Run the check in a background daemon thread
-        # daemon=True means the thread won't prevent the app from closing
-        # Docs: https://docs.python.org/3/library/threading.html#threading.Thread
-        thread = threading.Thread(target=_check, daemon=True)
-        thread.start()
+    def _show_update_check_result(self, manual: bool, message: str):
+        if manual:
+            QMessageBox.information(self, "Check for Updates", message)
 
     def _show_update_dialog(self, version: str, download_url: str):
         """Show a dialog telling the user about the update."""
@@ -3004,8 +3105,13 @@ class MainWindow(QMainWindow):
 
             webbrowser.open(download_url)
 
+def main() -> int:
+    """Installed GUI entry point."""
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    return app.exec()
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    main = MainWindow()
-    sys.exit(app.exec())
+    raise SystemExit(main())
+

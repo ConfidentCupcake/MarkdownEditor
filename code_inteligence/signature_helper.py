@@ -67,5 +67,3 @@ class SignatureHelper(QThread):
         self._shutting_down = True
         self._pending = None
         self.requestInterruption()
-        if self.isRunning():
-            self.wait(2000)

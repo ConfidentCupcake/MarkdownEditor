@@ -3,8 +3,9 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from uuid import uuid4
 
-from PyQt5.QtCore import QDir, QModelIndex, QPoint, Qt
+from PyQt5.QtCore import QDir, QModelIndex, QPoint, Qt, QDir, QItemSelectionModel
 from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QIcon
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -212,60 +213,82 @@ class FileManager(QTreeView):
         else:
             path.unlink()
 
-
     def action_delete(self, index: QModelIndex):
-        """Close affected editor tabs first, then delete selected filesystem paths."""
+        """Confirm the exact selection, then close all editors before deletion."""
         if not index.isValid():
             return
-        
-        file_name = self.model.fileName(index)
-        answer = self.show_dialog("Delete", f"Are you sure you want to delete {file_name}?")
-        
+
+        rows = list(self.selectionModel().selectedRows())
+        if index not in rows:
+            self.selectionModel().clearSelection()
+            self.selectionModel().select(
+                index,
+                QItemSelectionModel.Select | QItemSelectionModel.Rows,
+            )
+            rows = [index]
+
+        selected = [(Path(self.model.filePath(row)), self.model.isDir(row)) for row in rows]
+        # A selected parent already contains its selected descendants.
+        targets = [
+            (path, is_dir)
+            for path, is_dir in selected
+            if not any(other != path and other in path.parents for other, _other_is_dir in selected)
+        ]
+        label = f"'{targets[0][0].name}'" if len(targets) == 1 else f"{len(targets)} selected items"
+        answer = self.show_dialog(
+            "Permanent Delete",
+            f"Permanently delete {label}? This cannot be undone.",
+        )
         if answer != QMessageBox.Yes:
             return
-        selected_indexes = self.selectionModel().selectedRows()    
-        if not selected_indexes:
-            selected_indexes = [index]
-        selected_paths = [
-            (
-                Path(self.model.filePath(item)),
-                self.model.isDir(item),
-            )
-            for item in selected_indexes
-        ]
-        # If both parent folder and one of its children are selected,
-        # delete only the parent. The child disappears with it.
-        top_level_paths = []
-        
-        for path, is_directory in selected_paths:
-            has_selected_parent = any(
-                other_path != path and
-                other_path in path.parents
-                for other_path, _ in selected_paths
-            )
 
-            if not has_selected_parent:
-                top_level_paths.append((path, is_directory))
-
-        for path, is_directory in top_level_paths:
-            can_delete = self.main_window.close_editors_for_path(
-                target_path=path,
-                is_directory=is_directory,
-            )
-
-            if not can_delete:
+        # Phase 1: finish every editor prompt before touching the filesystem.
+        for path, is_directory in targets:
+            if not self.main_window.can_close_editors_for_path(path, is_directory=is_directory):
                 return
 
-        for path, _ in top_level_paths:
+        # Phase 2: close the already-approved editors.
+        for path, is_directory in targets:
+            self.main_window.close_editors_for_path(path, is_directory=is_directory, prompt=False)
+
+        # Phase 3: atomically rename every target out of view. If any rename
+        # fails, restore all earlier names; the requested set stays intact.
+        staged = []
+        try:
+            for path, _is_directory in targets:
+                temporary = path.with_name(f".{path.name}.markdowneditor-delete-{uuid4().hex}")
+                path.rename(temporary)
+                staged.append((path, temporary))
+        except OSError as error:
+            rollback_errors = []
+            for original, temporary in reversed(staged):
+                try:
+                    temporary.rename(original)
+                except OSError as rollback_error:
+                    rollback_errors.append(str(rollback_error))
+            details = "\n".join(rollback_errors)
+            QMessageBox.critical(
+                self,
+                "Delete",
+                f"Nothing was deleted because staging failed:\n{error}"
+                + (f"\nRollback errors:\n{details}" if details else ""),
+            )
+            return
+
+        # Cleanup begins only when the whole set is staged. If cleanup fails,
+        # the hidden staging name remains available for recovery.
+        cleanup_errors = []
+        for original, temporary in staged:
             try:
-                self.delete_file(path)
+                self.delete_file(temporary)
             except OSError as error:
-                QMessageBox.critical(
-                    self,
-                    "Delete",
-                    f"Could not delete '{path.name}':\n{error}",
-                )
-                return
+                cleanup_errors.append(f"{original.name}: {error}")
+        if cleanup_errors:
+            QMessageBox.critical(
+                self,
+                "Delete cleanup",
+                "Some staged recovery items could not be removed:\n" + "\n".join(cleanup_errors),
+            )
                 
     def action_new_file(self, ix: QModelIndex):
         root_path = self.model.rootPath()
@@ -316,27 +339,35 @@ class FileManager(QTreeView):
         except OSError as error:
             QMessageBox.warning(self, "Open in file manager", str(error))
 
-    def dropEvent(self, e:QDropEvent) -> None:
-        if not e.mimeData().hasUrls():
-            e.ignore()
+    def dropEvent(self, event: QDropEvent) -> None:
+        """Validate the complete batch before moving or copying anything."""
+        if not event.mimeData().hasUrls():
+            event.ignore()
             return
-        index = self.indexAt(e.pos())
+
+        index = self.indexAt(event.pos())
         if index.isValid():
             selected = Path(self.model.filePath(index))
             target_dir = selected if selected.is_dir() else selected.parent
         else:
             target_dir = Path(self.model.rootPath())
-        copy_requested = bool(e.keyboardModifiers() & Qt.ControlModifier)
+
+        copy_requested = bool(event.keyboardModifiers() & Qt.ControlModifier)
+        operations = []
         try:
-            for url in e.mimeData().urls():
-                source = Path(url.toLocalFile()).resolve()
-                destination = (target_dir / source.name).resolve()
+            for url in event.mimeData().urls():
+                source = Path(url.toLocalFile()).resolve(strict=True)
+                destination = (target_dir / source.name).resolve(strict=False)
                 if source == destination:
                     continue
                 if source.is_dir() and source in destination.parents:
                     raise OSError("Cannot copy a folder into itself")
                 if destination.exists():
                     raise FileExistsError(f"Destination already exists: {destination}")
+                operations.append((source, destination))
+
+            completed = []
+            for source, destination in operations:
                 if copy_requested:
                     if source.is_dir():
                         shutil.copytree(source, destination)
@@ -344,12 +375,30 @@ class FileManager(QTreeView):
                         shutil.copy2(source, destination)
                 else:
                     shutil.move(str(source), str(destination))
+                completed.append((source, destination))
         except OSError as error:
-            QMessageBox.critical(self, "File operation", str(error))
-            e.ignore()
+            rollback_errors = []
+            for source, destination in reversed(locals().get("completed", [])):
+                try:
+                    if copy_requested:
+                        self.delete_file(destination)
+                    elif destination.exists() and not source.exists():
+                        shutil.move(str(destination), str(source))
+                except OSError as rollback_error:
+                    rollback_errors.append(str(rollback_error))
+            details = "\n".join(rollback_errors)
+            QMessageBox.critical(
+                self,
+                "File operation",
+                str(error) + (f"\nRollback errors:\n{details}" if details else ""),
+            )
+            event.ignore()
             return
-        e.setDropAction(Qt.CopyAction if copy_requested else Qt.MoveAction)
-        e.accept()
+
+        event.setDropAction(Qt.CopyAction if copy_requested else Qt.MoveAction)
+        event.accept()
+        
+        
 class GitAwareFileSystemModel(QFileSystemModel):
     """QFileSystemModel that colors filenames by git status."""
 

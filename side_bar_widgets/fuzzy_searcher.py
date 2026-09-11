@@ -1,20 +1,35 @@
+import os
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtWidgets import QListWidgetItem
 
-import os
-from pathlib import Path
-import re
+
+MAX_RESULTS = 5_000
+EXCLUDED_DIRS = {
+    ".git", ".svn", ".hg", ".bzr", ".idea", ".vscode",
+    "__pycache__", "venv", ".venv", "env", "build", "dist",
+}
+EXCLUDED_SUFFIXES = {
+    ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico",
+    ".exe", ".dll", ".pyd", ".so", ".pyc", ".qm",
+}
+
 
 class SearchItem(QListWidgetItem):
-    def __init__(self, name, full_path, lineno, end, line):
+    """One exact match, with start/end columns for correct navigation."""
+
+    def __init__(self, name, full_path, lineno, start, end, line):
         self.name = name
         self.full_path = full_path
         self.lineno = lineno
+        self.start = start
         self.end = end
         self.line = line
-        self.formatted = f'{self.name}:{self.lineno + 1}:{self.end + 1} - {self.line} ...'
+        self.formatted = f"{name}:{lineno + 1}:{start + 1} - {line}"
         super().__init__(self.formatted)
-
 
     def __str__(self):
         return self.formatted
@@ -24,108 +39,117 @@ class SearchItem(QListWidgetItem):
 
 
 class SearchWorker(QThread):
-    results_ready = pyqtSignal(int, list)
+    results_ready = pyqtSignal(int, list, bool)
+    search_error = pyqtSignal(int, str)
 
     def __init__(self):
-        super(SearchWorker, self).__init__(None)
-        self.items = []
-        self.search_path: str = None
-        self.search_text: str = None
-        self.search_project: bool = None
+        super().__init__(None)
         self.generation = 0
+        self._request = None
         self._pending = None
+        self._shutting_down = False
         self.finished.connect(self._start_pending)
 
-    def is_binary(self, path):
-            '''
-            Check if file is binary
-            '''
-            with open(path, 'rb') as f:
-                return b'\0' in f.read(1024)
+    @staticmethod
+    def _is_binary(path):
+        with open(path, "rb") as handle:
+            return b"\0" in handle.read(1024)
 
-    def walkdir(self, path, exclude_dirs: list, exclude_files: list):
-        for root, dirs, files, in os.walk(path, topdown=True):
-            # filtering
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
-            files[:] = [f for f in files if Path(f).suffix not in exclude_files]
-            yield root, dirs, files
+    @staticmethod
+    def _walk(path, include_modules):
+        """Walk project files; optional module mode includes hidden module dirs.
 
-    def search(self):
-        debug = False
-        self.items = []
+        The old checkbox had no semantics. Here unchecked search omits all
+        hidden directories; checked search includes hidden directories except
+        explicit VCS/cache/environment exclusions.
+        """
+        for root, dirs, files in os.walk(path, topdown=True):
+            dirs[:] = [
+                directory
+                for directory in dirs
+                if directory not in EXCLUDED_DIRS
+                and (include_modules or not directory.startswith("."))
+            ]
+            yield root, files
 
-        # Guard: empty search text matches everything, which is useless
-        # and floods the results list.
-        if not self.search_text or not self.search_text.strip():
-            self.results_ready.emit(self.generation, [])
+    def update(self, text, path, include_modules, regex=False, case_sensitive=False):
+        if self._shutting_down:
             return
-
-        # you can add more
-        exclude_dirs = {
-            ".git", ".svn", ".hg", ".bzr", ".idea", ".vscode",
-            "__pycache__", "venv", ".venv", "env", "build", "dist",
-        }
-        exclude_files = {
-            ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico",
-            ".exe", ".dll", ".pyd", ".so", ".pyc", ".qm",
-        }
-
-        # Snapshot the search parameters at the start so mutations from
-        # update() during a running search don't cause inconsistent state.
-        pattern = self.search_text
-        search_path = self.search_path
-        try:
-            reg = re.compile(pattern, re.IGNORECASE)
-        except re.error as e:
-            if debug: print(e)
-            self.results_ready.emit(self.generation, [])
-            return
-
-        for root, _, files in self.walkdir(search_path, exclude_dirs, exclude_files):
-            # total search limit
-            if len(self.items) > 5_000:
-                break
-            for file_ in files:
-                full_path = os.path.join(root, file_)
-                try: 
-                    if self.is_binary(full_path):
-                        continue
-                    with open(full_path, 'r', encoding='utf8') as f:
-                        try:
-                            for i, line in enumerate(f):
-                                if m := reg.search(line):
-                                    fd = SearchItem(
-                                        file_,
-                                        full_path,
-                                        i,
-                                        m.end(),
-                                        line[m.start():].strip()[:50],
-                                    )
-                                    self.items.append(fd)
-                        except re.error as e:
-                            if debug: print(e)
-                except (OSError, UnicodeError) as e:
-                    if debug: print(e)
-                    continue
-
-        self.results_ready.emit(self.generation, self.items)
-
-    def run(self):
-        self.search()
-
-    def update(self, pattern, path, search_project):
         self.generation += 1
-        request = (self.generation, pattern, path, search_project)
+        request = (
+            self.generation,
+            text,
+            str(path),
+            bool(include_modules),
+            bool(regex),
+            bool(case_sensitive),
+        )
         if self.isRunning():
             self._pending = request
-            return
-        self._start_request(request)
+        else:
+            self._start_request(request)
 
     def _start_request(self, request):
-        self.generation, self.search_text, self.search_path, self.search_project = request
+        self._request = request
         self.start()
 
     def _start_pending(self):
-        if self._pending is not None:
+        if not self._shutting_down and self._pending is not None:
             request, self._pending = self._pending, None
             self._start_request(request)
+
+    def shutdown(self):
+        self._shutting_down = True
+        self._pending = None
+        self.requestInterruption()
+
+    def run(self):
+        generation, text, path, include_modules, regex_mode, case_sensitive = self._request
+        if not text or not text.strip():
+            self.results_ready.emit(generation, [], False)
+            return
+
+        expression = text if regex_mode else re.escape(text)
+        flags = 0 if case_sensitive else re.IGNORECASE
+        try:
+            pattern = re.compile(expression, flags)
+        except re.error as error:
+            self.search_error.emit(generation, str(error))
+            return
+
+        items = []
+        for root, files in self._walk(path, include_modules):
+            if self._shutting_down or self.isInterruptionRequested():
+                return
+            for file_name in files:
+                file_path = Path(root) / file_name
+                if file_path.suffix.lower() in EXCLUDED_SUFFIXES:
+                    continue
+                try:
+                    if self._is_binary(file_path):
+                        continue
+                    with file_path.open("r", encoding="utf-8") as handle:
+                        for line_number, line in enumerate(handle):
+                            if self._shutting_down or self.isInterruptionRequested():
+                                return
+                            for match in pattern.finditer(line):
+                                # Zero-length matches are not useful navigation
+                                # targets and can create enormous result sets.
+                                if match.start() == match.end():
+                                    continue
+                                items.append(
+                                    SearchItem(
+                                        file_name,
+                                        str(file_path),
+                                        line_number,
+                                        match.start(),
+                                        match.end(),
+                                        line.strip()[:80],
+                                    )
+                                )
+                                if len(items) >= MAX_RESULTS:
+                                    self.results_ready.emit(generation, items, True)
+                                    return
+                except (OSError, UnicodeError):
+                    continue
+        self.results_ready.emit(generation, items, False)

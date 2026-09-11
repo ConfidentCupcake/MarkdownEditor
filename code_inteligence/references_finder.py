@@ -57,8 +57,7 @@ class ReferencesFinder(QThread):
                 self.error.emit(generation, str(exc))
 
     def shutdown(self):
+        """Reject future/results requests; completion remains asynchronous."""
         self._shutting_down = True
         self._pending = None
         self.requestInterruption()
-        if self.isRunning():
-            self.wait(2000)
