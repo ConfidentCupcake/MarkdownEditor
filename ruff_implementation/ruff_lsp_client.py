@@ -55,7 +55,7 @@ class RuffLspClient(QObject):
                 when the application window is destroyed.
         """
         super().__init__(parent)
-
+        
         self.python_executable = python_executable
         self.workspace_root = Path(workspace_root).resolve()
 
@@ -87,6 +87,10 @@ class RuffLspClient(QObject):
         self.process.readyReadStandardError.connect(self._read_stderr)
         self.process.errorOccurred.connect(self._on_process_error)
         self.process.finished.connect(self._on_finished)
+        
+        self.position_encoding = "utf-16"
+        self._restart_attempts = 0
+        self._max_restart_attempts = 3
 
     @property
     def is_ready(self) -> bool:
@@ -209,18 +213,25 @@ class RuffLspClient(QObject):
         self.request("initialize", params, self._on_initialized)
 
     def _on_initialized(self, result, error):
-        """Complete the LSP startup handshake after initialize response."""
+        """Complete initialization and retain negotiated position encoding."""
         if error is not None:
             self.server_error.emit(f"Ruff initialize failed: {error}")
             self._suppress_restart_once = True
             self.process.kill()
             return
-
-        # This is a NOTIFICATION. It has no request id and no response.
+        
+        capabilities = (result or {}).get("capabilities", {})
+        self.position_encoding = capabilities.get("positionEncoding", "utf-16")
+        # Do not reset retries immediately: a server that initializes and then
+        # crashes would otherwise retry forever. Reset only after a stable run.
+        QTimer.singleShot(60_000, self._reset_retries_if_stable)
         self.notify("initialized", {})
-
         self._initialized = True
         self.server_ready.emit()
+        
+    def _reset_retries_if_stable(self):
+        if self.is_ready and not self._shutting_down:
+            self._restart_attempts = 0
 
     def open_document(self, uri: str, text: str, version: int):
         """Send the intitial in-memory content for one Python editor tab."""
@@ -271,23 +282,20 @@ class RuffLspClient(QObject):
                 {"textDocument": {"uri": uri}},
             )
 
-    def request(self, method: str, params: dict, callback):
-        """Send one JSON-RPC request and sace its response callback."""
+    def request(self, method: str, params, callback):
+        """Send one request; omit params when the method requires no value."""
         request_id = self._next_request_id
         self._next_request_id += 1
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
 
-        # Store before writing. Ruff can respond quickly on a local process
         self._pending_requests[request_id] = callback
-
-        sent = self._send(
-            {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": method,
-                "params": params,
-            }
-        )
-        if not sent:
+        if not self._send(payload):
             self._pending_requests.pop(request_id, None)
             callback(None, {"message": "Ruff server is not running"})
 
@@ -404,41 +412,54 @@ class RuffLspClient(QObject):
             self.server_error.emit("Ruff server process error: " + self.process.errorString())
 
     def _on_finished(self, exit_code, _exit_status):
-        """Restart lifecycle flags if Ruff exists enexpectedly or during shutdown."""
+        """Clear state and retry failed startup only a bounded number of times."""
         self._initialized = False
         self._started = False
         self._pending_requests.clear()
         self._read_buffer.clear()
         self.server_stopped.emit()
+
         if self._suppress_restart_once:
             self._suppress_restart_once = False
-        elif not self._shutting_down:
+            return
+        if self._shutting_down:
+            return
+
+        self._restart_attempts += 1
+        if self._restart_attempts > self._max_restart_attempts:
             self.server_error.emit(
-                f"Ruff server stopped with exit code {exit_code}; restarting."
+                "Ruff disabled after repeated startup failures. "
+                "Check the selected interpreter in Settings."
             )
-            QTimer.singleShot(1000, self.start)
+            return
+
+        delay_ms = min(30_000, 1000 * 2 ** (self._restart_attempts - 1))
+        self.server_error.emit(
+            f"Ruff stopped with exit code {exit_code}; "
+            f"retry {self._restart_attempts}/{self._max_restart_attempts}."
+        )
+        QTimer.singleShot(delay_ms, self.start)
 
     def shutdown(self):
-        """Shut down the language server using the standard LSP lifecycle."""
+        """Perform the LSP shutdown → exit sequence, then enforce a timeout."""
         self._shutting_down = True
         if self.process.state() == QProcess.NotRunning:
             return
 
-        def after_shutdown(_result, _error):
-            # 'exit' is a notification sent only after shutdown response.
-            self.notify("exit", {})
-            QTimer.singleShot(500, self._force_stop)
+        def after_shutdown(_result, error):
+            if error is None and self.process.state() == QProcess.Running:
+                self.notify("exit", {})
+            else:
+                self._force_stop()
 
         if self._initialized:
-            self.request("shutdown", {}, after_shutdown)
+            # LSP shutdown has no params. Sending {} is invalid for Ruff.
+            self.request("shutdown", None, after_shutdown)
             QTimer.singleShot(2000, self._force_stop)
-
         else:
-            # If initialization never completed, a normal shutdown request is not valid.
-            # End the incomplete process direclty.
             self._force_stop()
 
     def _force_stop(self):
-        """Terminate a server that did not complete the asynchronous handshake."""
+        """Kill only when graceful shutdown did not finish."""
         if self.process.state() != QProcess.NotRunning:
             self.process.kill()

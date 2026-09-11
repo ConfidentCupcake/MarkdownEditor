@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from PyQt5.QtCore import QObject, QTimer
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 from PyQt5.QtWidgets import QToolTip
 
 from ruff_implementation.ruff_diagnostics_model import RuffDiagnostic, RuffPosition, RuffSeverity
@@ -13,6 +13,7 @@ from ruff_implementation.ruff_diagnostics_view import RuffDiagnosticView
 
 class RuffLspController(QObject):
     """Keep one QScintilla Python document synchronized with Ruff LSP."""
+    diagnostics_changed = pyqtSignal(object, list)
     
     def __init__(self, editor, client, parent=None):
         # Parent this controller to the editor unless a different explicit parent was supplied.
@@ -156,65 +157,64 @@ class RuffLspController(QObject):
             self.document_version,
         )
 
-    def _on_diagnostics_published(self, uri: str, raw_diagnostics, version):
-        """Convert and render only current diagnostics for this document."""
-        if self._closed or uri != self.uri:
-            # This notification belongs to another Python tab.
-            return
+    def _lsp_column_to_character(self, line: int, column: int) -> int:
+        """Translate negotiated LSP units into QScintilla character columns."""
+        if line < 0 or line >= self.editor.lines():
+            return 0
+        value = self.editor.text(line).rstrip("\r\n")
+        column = max(0, int(column))
+        encoding = getattr(self.client, "position_encoding", "utf-16")
+        if encoding == "utf-8":
+            raw = value.encode("utf-8")[:column]
+            return len(raw.decode("utf-8", errors="ignore"))
+        if encoding == "utf-16":
+            raw = value.encode("utf-16-le")[: column * 2]
+            return len(raw.decode("utf-16-le", errors="ignore"))
+        return min(column, len(value))
 
-        # Server versions are optional in LSP. If Ruff sends one, reject output
-        # from an old document snapshot to avoid stale squiggles after typing.
+    def _on_diagnostics_published(self, uri: str, raw_diagnostics, version):
+        """Render only current diagnostics belonging to this document."""
+        if self._closed or uri != self.uri:
+            return
         if version is not None and version != self.document_version:
             return
 
-        diagnostics = [
-            self._to_diagnostic(raw)
-            for raw in raw_diagnostics
-        ]
-
-        # The view always clears the old visual state before painting the new list.
-        # An empty server list removes indicators after the user fixes an error.
+        diagnostics = [self._to_diagnostic(raw) for raw in raw_diagnostics]
         self.view.render(diagnostics)
+        # MainWindow owns the cat/XP state; the controller only reports data.
+        self.diagnostics_changed.emit(self.editor, diagnostics)
 
     def _to_diagnostic(self, raw: dict) -> RuffDiagnostic:
-        """Adapt one standard LSP Diagnostic dictionary to the app model."""
+        """Convert one LSP diagnostic, including negotiated column units."""
         raw_range = raw.get("range") or {}
         start = raw_range.get("start") or {}
         end = raw_range.get("end") or start
+        start_line = max(0, int(start.get("line", 0)))
+        last_line = max(0, self.editor.lines() - 1)
+        start_line = min(start_line, last_line)
+        end_line = min(last_line, max(start_line, int(end.get("line", start_line))))
 
-        # LSP DiagnosticSeverity uses integer values:
-        # 1=Error, 2=Warning, 3=Information, 4=Hint.
-        # The app has three display categories, so Hint becomes INFO.
         severity_by_number = {
             1: RuffSeverity.ERROR,
             2: RuffSeverity.WARNING,
             3: RuffSeverity.INFO,
             4: RuffSeverity.INFO,
         }
-
-        # LSP `code` is allowed to be string, integer, or CodeDescription-like
-        # data in generic servers. Convert it to a displayable string safely.
         code = raw.get("code", "Ruff")
         if not isinstance(code, str):
             code = str(code)
 
         return RuffDiagnostic(
             code=code,
-            message=raw.get("message", "Ruff diagnostic"),
-            severity=severity_by_number.get(
-                raw.get("severity"),
-                RuffSeverity.WARNING,
-            ),
-            # LSP and QScintilla both use zero-based line positions for this
-            # integration. Character encoding behavior is covered by a Unicode
-            # regression test after ASCII diagnostics are verified.
+            message=str(raw.get("message", "Ruff diagnostic")),
+            severity=severity_by_number.get(raw.get("severity"), RuffSeverity.WARNING),
             start=RuffPosition(
-                start.get("line", 0),
-                start.get("character", 0),
+                start_line,
+                self._lsp_column_to_character(start_line, start.get("character", 0)),
             ),
             end=RuffPosition(
-                end.get("line", 0),
-                end.get("character", 0),
+                end_line,
+                self._lsp_column_to_character(end_line, end.get("character", 0)),
             ),
             revision=self.document_version,
             raw=raw,

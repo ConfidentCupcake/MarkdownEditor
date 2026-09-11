@@ -9,6 +9,9 @@ import tempfile
 import traceback
 from pathlib import Path
 
+import bleach
+import hashlib
+
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu-shader-disk-cache")
 
 import markdown
@@ -34,6 +37,45 @@ from side_bar_widgets.fuzzy_searcher import SearchItem, SearchWorker
 
 APP_VERSION = "v1.9.2"
 
+# Markdown is untrusted document content. Only presentation-oriented HTML is allowed onto the JavaScript-enabled preview.
+# Event attributes, script/style, iframes, object/embed, and javascript:/data: URLs are intentionally excluded.
+MARKDOWN_ALLOWED_TAGS = frozenset(
+    bleach.sanitizer.ALLOWED_TAGS
+    | {
+        "p","pre","code","h1","h2","h3","h4","h5","h6",
+        "br","hr","blockquote","ul","ol","li","table","thead",
+        "tbody","tr","th","td","img","del","sup","sub",
+    }
+)
+
+MARKDOWN_ALLOWED_ATTRIBUTES = {
+    "a": ["href", "title"],
+    "img": ["scr", "alt", "title"],
+    "code": ["class"],
+    "th": ["align"],
+    "td": ["align"],
+}
+MARKDOWN_ALLOWED_PROTOCOLS = frozenset({"http", "https", "mailto"})
+
+PYTHON_SUFFIXES = frozenset({".py", ".pyw", "pyi"})
+UTF8_BOM = b"\xef\xbb\xbf"
+
+def is_python_path(path: Path) -> bool:
+    """Return one canonical answer for every editor-mode desicion."""
+    return Path(path).suffix.lower() in PYTHON_SUFFIXES
+
+def disk_digest(path: Path) -> bytes:
+    """Hash current bytes so timestamp-only changes do not cause conflicts."""
+    return hashlib.sha256(path.read_bytes()).digest()
+
+
+def save_target(path: Path) -> Path:
+    """Preserve a symlink by atomically replacing its target, not the link."""
+    path = Path(path)
+    if path.is_symlink():
+        # strict=True rejects broken links instead of replacing them silently.
+        return path.resolve(strict=True)
+    return path
 
 def _excepthook(exc_type, exc, tb):
     try:
@@ -505,28 +547,22 @@ class MainWindow(QMainWindow):
         return label
 
     def get_editor(self, path: Path = None, is_python_file=None) -> QsciScintilla:
-        """Create the correct editor type for this individual document."""
-        # A saved file chooses its editor based on file extension. This prevents
-        # a .py file from being opened as MarkdownEditor, where Ruff cannot run.
+        """Create the correct editor using the shared extension policy."""
         if path is not None and is_python_file is None:
             path = Path(path)
-            is_python_file = path.suffix.lower() in {".py", ".pyw", ".pyi"}
-        # An untitled document has no extension yet, so use the active editor mode.
+            is_python_file = is_python_path(path)
         elif is_python_file is None:
             is_python_file = self.python_editor_active
+
         if is_python_file:
-            # A .py tab recieves the shared language-server client. Each tab creats its own RuffLspController,
-            # but all controllers share this one QProcess
             editor = PythonEditor(
-                path=path, is_python_file=True, ruff_lsp_client=self.ruff_lsp_client
+                path=path,
+                is_python_file=True,
+                ruff_lsp_client=self.ruff_lsp_client,
             )
         else:
-            # Markdown documents never open an LSP Python document
             editor = MarkdownEditor(path=path, is_python_file=False)
 
-        # BUGFIX: a newly opened tab used the hard-coded __init__ look and
-        # ignored everything saved in the Settings dialog. Apply the saved
-        # settings (font, wrap, margins, theme) so every tab matches.
         saved = getattr(self, "_current_settings", None)
         if saved:
             self._apply_editor_settings(editor, saved)
@@ -555,6 +591,8 @@ class MainWindow(QMainWindow):
         )
         if isinstance(editor, PythonEditor):
             editor.goto_definition_requested.connect(self._open_file_at_position)
+            if editor.ruff_lsp is not None:
+                editor.ruff_lsp.diagnostics_changed(self._on_ruff_diagnostics_changed)
 
     def _cat_unbox(self):
         """
@@ -569,6 +607,18 @@ class MainWindow(QMainWindow):
         """Expose Ruff LSP startup and protocol failures to the user."""
         print(f"Ruff LSP error {message}")
         self.statusBar().showMessage(message, 8000)
+
+    def _on_ruff_diagnostics_changed(self, editor, diagnostics: list):
+        """React once when a Python tab enters or leaves an error state."""
+        had_errors = getattr(self, "_had_ruff_erroes", False)
+        has_errors = bool(diagnostics)
+        if has_errors and not had_errors:
+            self.cat.set_state("alert", 2000)
+        elif not has_errors and had_errors:
+            self.cat.add_xp(5)
+            self.cat.set_state("stretch", 1500)
+        editor._had_ruff_errors = has_errors
+
 
     def _restart_ruff(self, python_executable: str):
         """Replace the shared Ruff server and reconnect every Python tab."""
@@ -1568,47 +1618,48 @@ class MainWindow(QMainWindow):
         with open(path, "rb") as f:
             return b"\0" in f.read(1024)
 
-    def set_new_tab(self, path: Path, is_new_file=False, target_group=None, is_python_file=None):
+    def set_new_tab(
+        self,
+        path: Path,
+        is_new_file=False,
+        target_group=None,
+        is_python_file=None,
+    ):
+        """Open one UTF-8 document without silently changing its bytes."""
         path = Path(path) if path is not None else None
         if is_new_file:
             return self.new_file(target_group=target_group)
         if path is None or not path.is_file():
             return None
         if self.is_binary(path):
-            self.statusBar().showMessage(
-                "Cannot Open Binary File",
-                2000,
-            )
+            self.statusBar().showMessage("Cannot open binary file", 2000)
             return None
+
         existing = self.tab_view.find_editor_by_path(path)
         if existing is not None:
             self.tab_view.focus_editor(existing)
             return existing
 
-        # IMPORTANT:
-        # Do not select PythonEditor/MarkdownEditor here based on the global python_editor_active flag.
-        # Existing files must be selected from their own extensions, not from whichever editor mode was last active.
         editor = self.get_editor(path=path, is_python_file=is_python_file)
-
-        if isinstance(editor, PythonEditor):
-            self.outline_tree.update_outline(editor.text())
-        else:
-            self.outline_tree.clear()
-
         try:
-            raw = path.read_bytes()
-            text = raw.decode("utf-8-sig", errors="replace")
-        except OSError as error:
+            target = save_target(path)
+            raw = target.read_bytes()
+            has_bom = raw.startswith(UTF8_BOM)
+            text = raw.decode("utf-8-sig")  # strict: never replace bad bytes
+        except (OSError, UnicodeDecodeError) as error:
             QMessageBox.critical(
                 self,
                 "Open File",
-                f"Could not open{path}:\n{error}",
+                f"Could not open '{path}':\n{error}",
             )
             editor.deleteLater()
             return None
 
-        # QScintilla normalizes its internal text, so retain the dominant
-        # on-disk newline convention for subsequent saves.
+        # File format state belongs to the tab and is refreshed after each save.
+        editor._utf8_bom = has_bom
+        editor._disk_digest = hashlib.sha256(raw).digest()
+        editor._save_target = target
+
         crlf_count = raw.count(b"\r\n")
         lf_count = raw.count(b"\n") - crlf_count
         cr_count = raw.count(b"\r") - crlf_count
@@ -1621,13 +1672,15 @@ class MainWindow(QMainWindow):
 
         editor.setTextSafely(text)
         self._connect_editor(editor)
-
         self.tab_view.add_editor(editor, path.name, target_group)
         self.tab_view.set_editor_tooltip(editor, str(path.absolute()))
 
         self.current_file = path
         self._add_to_recent_files(str(path))
-
+        if isinstance(editor, PythonEditor):
+            self.outline_tree.update_outline(editor.text())
+        else:
+            self.outline_tree.clear()
         return editor
 
     def get_frame(self) -> QFrame:
@@ -1970,60 +2023,55 @@ class MainWindow(QMainWindow):
         self.render_preview()
         return True
 
-    def on_file_rename(self, old_path: Path, new_path: Path, is_directory: bool = False):
-        """Update every editor affected by a filesystem rename.
-
-        FileManager has already renamed the entry in QFileSystemModel.
-        This method updates the in-memory editor metadata and the tab UI.
-        """
-
+    def on_file_rename(self, old_path: Path, new_path: Path, is_directory=False):
+        """Relocate every affected tab while preserving one-path ownership."""
         old_path = Path(old_path)
         new_path = Path(new_path)
 
-        for editor in self.tab_view.all_editors():
+        for editor in list(self.tab_view.all_editors()):
             editor_path = getattr(editor, "path", None)
-
             if editor_path is None:
                 continue
-
             editor_path = Path(editor_path)
 
             if is_directory:
                 if editor_path == old_path:
-                    # BUGFIX: '==' (comparison) instead of '=' (assignment) -> UnboundLocalError
                     updated_path = new_path
                 elif old_path in editor_path.parents:
-                    relative_path = editor_path.relative_to(old_path)
-                    updated_path = new_path / relative_path
+                    updated_path = new_path / editor_path.relative_to(old_path)
                 else:
                     continue
-
-            else:
-                if editor_path != old_path:
-                    continue
-
+            elif editor_path == old_path:
                 updated_path = new_path
+            else:
+                continue
 
             editor.path = updated_path
             editor.full_path = updated_path.absolute()
+            try:
+                target = save_target(updated_path)
+                editor._save_target = target
+                editor._disk_digest = disk_digest(target)
+            except OSError:
+                editor._disk_digest = None
+
+            desired_class = PythonEditor if is_python_path(updated_path) else MarkdownEditor
+            converted = not isinstance(editor, desired_class)
+            if converted:
+                editor = self._convert_editor(editor, desired_class)
+
             if isinstance(editor, PythonEditor):
-                if editor.ruff_lsp is not None:
+                # A newly converted controller was constructed with the new path;
+                # an existing Python controller must migrate from its old URI.
+                if not converted and editor.ruff_lsp is not None:
                     editor.ruff_lsp.relocate(updated_path)
                 editor.auto_completer.file_path = str(editor.full_path)
 
-            desired_class = PythonEditor if updated_path.suffix.lower() == ".py" else MarkdownEditor
-            if not isinstance(editor, desired_class):
-                editor = self._convert_editor(editor, desired_class)
-
-            is_dirty = editor in self._dirty_editors
             title = updated_path.name
-
-            if is_dirty:
+            if editor in self._dirty_editors:
                 title = f"● {title}"
-
             self.tab_view.set_editor_title(editor, title)
             self.tab_view.set_editor_tooltip(editor, str(editor.full_path))
-
             if editor is self.current_editor():
                 self.current_file = updated_path
 
@@ -2152,8 +2200,8 @@ class MainWindow(QMainWindow):
         self.file_manager.check_git_status()
 
     def _run_ruff_before_save(self, path: Path, text: str) -> str:
-        """Apply Ruff safe fixes and formatting to a temporary Python file."""
-        if self.ruff_save_mode != "safe_format" or path.suffix.lower() != ".py":
+        """Apply Ruff safe fixes/formatting to every supported Python suffix."""
+        if self.ruff_save_mode != "safe_format" or not is_python_path(path):
             return text
 
         temporary = None
@@ -2193,20 +2241,52 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _encode_editor_text(editor, text: str) -> bytes:
+        """Encode the editor buffer while preserving EOL mode and UTF-8 BOM."""
         normalized = text.replace("\r\n", "\n").replace("\r", "\n")
         if editor.eolMode() == QsciScintilla.EolWindows:
             normalized = normalized.replace("\n", "\r\n")
         elif editor.eolMode() == QsciScintilla.EolMac:
             normalized = normalized.replace("\n", "\r")
-        return normalized.encode("utf-8")
+        data = normalized.encode("utf-8")
+        return UTF8_BOM + data if getattr(editor, "_utf8_bom", False) else data
 
-    def _save_editor_to_path(self, editor, path: Path) -> bool:
-        """Format when requested, then atomically persist one editor."""
-        path = Path(path)
-        original = editor.text()
-        formatted = original
+    def _save_editor_to_path(
+        self,
+        editor,
+        path: Path,
+        *,
+        check_external_change: bool = True,
+    ) -> bool:
+        """Format and atomically save without losing links or newer disk data."""
+        logical_path = Path(path)
         try:
-            formatted = self._run_ruff_before_save(path, original)
+            target = save_target(logical_path)
+        except OSError as error:
+            QMessageBox.critical(self, "Save File", f"Broken symbolic link:\n{error}")
+            return False
+
+        if check_external_change and target.exists():
+            expected = getattr(editor, "_disk_digest", None)
+            try:
+                actual = disk_digest(target)
+            except OSError as error:
+                QMessageBox.critical(self, "Save File", str(error))
+                return False
+            if expected is not None and actual != expected:
+                reply = QMessageBox.warning(
+                    self,
+                    "File changed on disk",
+                    f"'{logical_path.name}' changed outside the editor.\n"
+                    "Overwrite the newer disk version?",
+                    QMessageBox.Yes | QMessageBox.Cancel,
+                    QMessageBox.Cancel,
+                )
+                if reply != QMessageBox.Yes:
+                    return False
+
+        original = editor.text()
+        try:
+            formatted = self._run_ruff_before_save(logical_path, original)
         except (OSError, subprocess.SubprocessError, RuntimeError) as error:
             reply = QMessageBox.warning(
                 self,
@@ -2217,24 +2297,27 @@ class MainWindow(QMainWindow):
             )
             if reply != QMessageBox.Save:
                 return False
+            formatted = original
 
         temporary = None
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
             data = self._encode_editor_text(editor, formatted)
             with tempfile.NamedTemporaryFile(
-                dir=path.parent, prefix=f".{path.name}.", delete=False
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                delete=False,
             ) as handle:
                 temporary = Path(handle.name)
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
-            if path.exists():
-                os.chmod(temporary, path.stat().st_mode)
-            os.replace(temporary, path)
+            if target.exists():
+                os.chmod(temporary, target.stat().st_mode)
+            os.replace(temporary, target)
             temporary = None
         except OSError as error:
-            QMessageBox.critical(self, "Save File", f"Could not save '{path}':\n{error}")
+            QMessageBox.critical(self, "Save File", f"Could not save '{logical_path}':\n{error}")
             return False
         finally:
             if temporary is not None:
@@ -2242,6 +2325,8 @@ class MainWindow(QMainWindow):
 
         if formatted != original:
             editor.setTextSafely(formatted)
+        editor._save_target = target
+        editor._disk_digest = hashlib.sha256(data).digest()
         self.mark_editor_clean(editor)
         return True
 
@@ -2274,53 +2359,48 @@ class MainWindow(QMainWindow):
         return True
 
     def save_as(self):
+        """Save under a new unique logical path and convert editor mode."""
         editor = self.current_editor()
-
         if editor is None:
             return False
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save As",
-            os.getcwd(),
-        )
-
+        
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save As", os.getcwd())
         if not file_path:
-            self.statusBar().showMessage(
-                "Cancelled",
-                2000,
-            )
+            self.statusBar().showMessage("Cancelled", 2000)
             return False
-
+        
         path = Path(file_path)
-        if not self._save_editor_to_path(editor, path):
+        owner = self.tab_view.find_editor_by_path(path)
+        if owner is not None and owner is not editor:
+            QMessageBox.warning(
+                self, "Save As",
+                "That file is already open in another tab."
+            )
+            self.tab_view.focus_editor(owner)
             return False
-
+        
+        # The file dialog already handled intentional replacement. The old tab
+        # fingerprint belongs to the old path, so do not comapre it here.
+        if not self._save_editor_to_path(editor, path, check_external_change=True):
+            return False
+        
         editor.path = path
         editor.full_path = path.absolute()
+        self.current_file = path
+        self.tab_view.set_editor_tooltip(editor, str(editor.full_path))
+        
+        desired_class = PythonEditor if is_python_path(path) else MarkdownEditor
+        if not isinstance(editor, desired_class):
+            editor = self._convert_editor(editor, desired_class)
+
         if isinstance(editor, PythonEditor):
             if editor.ruff_lsp is not None:
                 editor.ruff_lsp.relocate(path)
             editor.auto_completer.file_path = str(editor.full_path)
-        self.current_file = path
-
-        self.tab_view.set_editor_tooltip(
-            editor,
-            str(editor.full_path),
-        )
 
         self.mark_editor_clean(editor)
-
-        desired_class = PythonEditor if path.suffix.lower() == ".py" else MarkdownEditor
-        if not isinstance(editor, desired_class):
-            editor = self._convert_editor(editor, desired_class)
         self._add_to_recent_files(str(path))
-
-        self.statusBar().showMessage(
-            f"Saved {path.name}",
-            2000,
-        )
-
+        self.statusBar().showMessage(f"Saved {path.name}", 2000)
         return True
 
     def copy(self):
@@ -2411,19 +2491,46 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.render_preview)
         self.statusBar().showMessage("Markdown-Editor applied", 2000)
 
+    def _render_markdown_safely(self, source: str) -> str:
+        """
+        Convert Markdown and remove active/untrusted HTML.
+
+        Python-Markdown deliberately preserves raw HTML. The preview is a QWebEngine page, so raw
+        event handlers or script elements would be active content.
+        Bleack applies a small, explicit allowlist before the result reaches innerHTML.
+        """
+        self.md.reset()
+        rendered = self.md.convert(source)
+        return bleach.clean(
+            rendered,
+            tags=MARKDOWN_ALLOWED_TAGS,
+            attributes=MARKDOWN_ALLOWED_ATTRIBUTES,
+            protocols=MARKDOWN_ALLOWED_PROTOCOLS,
+            strip=True,
+            strip_comments=True,
+        )
+
     def render_preview(self):
+        """Render only sanitized Markdown into the already loaded shell."""
         editor = self.current_editor()
+
         if not isinstance(editor, MarkdownEditor) or not self._preview_ready:
             return
-        self.md.reset()
-        body = self.md.convert(editor.text())
-        payload = json.dumps(body)
-        js = f'document.getElementById("content").innerHTML = {payload};'
-        self.preview.page().runJavaScript(js)
+
+        safe_body = self._render_markdown_safely(editor.text())
+        # json.dumps creats a valid JavaScript string literal. Never interpolate
+        # document text directly into JavaScript source.
+        payload = json.dumps(safe_body)
+        script = f'document.getElementById("content").innerHTML = {payload};'
+        self.preview.page().runJavaScript(script)
 
     def _on_preview_loaded(self, ok):
-        self._preview_ready = True
-        self.render_preview()
+        """Enable rendering only when the fixed preview shell loads."""
+        self._preview_ready = bool(ok)
+        if self.preview_ready:
+            self.render_preview()
+        else:
+            self.statusBar().showMessage("Markdown preview failed to load.", 4000)
 
     def sync_scroll(self, editor):
         if not self._preview_ready or editor is not self.current_editor():
@@ -2443,13 +2550,10 @@ class MainWindow(QMainWindow):
         return self._convert_editor(self.current_editor(), EditorClass)
 
     def _convert_editor(self, old, EditorClass):
-        if old is None:
-            return None
-        if isinstance(old, EditorClass):
+        """Replace one tab's editor class without losing document state."""
+        if old is None or isinstance(old, EditorClass):
             return old
-
         group = self.tab_view.group_for_editor(old)
-
         if group is None:
             return None
 
@@ -2459,7 +2563,6 @@ class MainWindow(QMainWindow):
         title = group.tabText(index)
         tooltip = group.tabToolTip(index)
         icon = group.tabIcon(index)
-
         text = old.text()
         path = getattr(old, "path", None)
         was_dirty = old in self._dirty_editors
@@ -2469,6 +2572,11 @@ class MainWindow(QMainWindow):
 
         new_editor = self.get_editor(path=path, is_python_file=(EditorClass is PythonEditor))
         new_editor.setTextSafely(text)
+        # Preserve the disk-format/conflict state introduced by this fix.
+        new_editor._utf8_bom = getattr(old, "_utf8_bom", False)
+        new_editor._disk_digest = getattr(old, "_disk_digest", None)
+        new_editor._save_target = getattr(old, "_save_target", path)
+        new_editor.setEolMode(old.eolMode())
         self._connect_editor(new_editor)
 
         group.blockSignals(True)
@@ -2484,10 +2592,8 @@ class MainWindow(QMainWindow):
         if was_dirty:
             self._dirty_editors.discard(old)
             self._dirty_editors.add(new_editor)
-
         if hasattr(old, "shutdown"):
             old.shutdown()
-
         old.setParent(None)
         old.deleteLater()
 
