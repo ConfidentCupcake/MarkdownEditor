@@ -36,7 +36,12 @@ from side_bar_widgets.code_outline import CodeOutlineTree
 from side_bar_widgets.file_manager import FileManager
 from side_bar_widgets.fuzzy_searcher import SearchItem, SearchWorker
 
-APP_VERSION = "v1.9.2"
+from markdown_python_editor import __version__
+from markdowneditor_assets import asset_path
+
+# Runtime display and update comparison use the same value that setuptools
+# writes into wheel metadata. Prefixing "v" is presentation only.
+APP_VERSION = f"v{__version__}"
 
 # Markdown is untrusted document content. Only presentation-oriented HTML is allowed onto the JavaScript-enabled preview.
 # Event attributes, script/style, iframes, object/embed, and javascript:/data: URLs are intentionally excluded.
@@ -98,21 +103,14 @@ def _excepthook(exc_type, exc, tb):
 sys.excepthook = _excepthook
 
 
-def resource_path(relative_path):
-    """
-    Get the absolute path to a bundled resource file.
-    Works both when running from source (python main.py)
-    and when running as a PyInstaller exe.
+def resource_path(relative_path: str) -> str:
+    """Return an installed/source-safe path to a runtime asset.
 
-    When PyInstaller bundles your app, it extracts data files
-    into a temporary folder. sys._MEIPASS points to that folder.
-    When running from source, _MEIPASS doesn't exist, so we
-    fall back to the current directory.
-
-    Docs: https://pyinstaller.org/en/stable/runtime-information.html
+    Runtime assets are owned by the ``markdowneditor_assets`` package. Keeping
+    this wrapper preserves existing call sites while removing assumptions that
+    CSS/icons/themes live beside ``main.py``.
     """
-    root = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(__file__).resolve().parent
-    return str(root / relative_path)
+    return asset_path(relative_path)
 
 
 class MainWindow(QMainWindow):
@@ -1452,9 +1450,8 @@ class MainWindow(QMainWindow):
         The theme file is the single source of truth for these values —
         QSettings only stores WHICH theme is active.
         """
-        path = self._active_theme_path() or str(
-            Path(__file__).resolve().parent / "themes" / "theme.json"
-        )
+        # The packaged default remains available after a wheel installation.
+        path = self._active_theme_path() or asset_path("themes/theme.json")
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -1512,13 +1509,15 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Could not write theme: {e}", 4000)
 
     def _theme_path(self, theme_name):
-        """
-        Absolute path of a theme FILE NAME (e.g. 'theme.json') from the
-        themes/ folder next to main.py. Returns None when the file does
-        not exist, so the lexer falls back to its built-in default.
+        """Return a user override or packaged theme path.
+
+        User-edited themes in the platform configuration directory take
+        precedence. Otherwise the immutable JSON shipped in
+        ``markdowneditor_assets/themes`` is used.
         """
         if not theme_name:
             return None
+
         user_candidate = (
             Path(QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation))
             / "themes"
@@ -1526,11 +1525,9 @@ class MainWindow(QMainWindow):
         )
         if user_candidate.is_file():
             return str(user_candidate)
-        base = (
-            Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
-        )
-        candidate = base / "themes" / theme_name
-        return str(candidate) if candidate.is_file() else None
+
+        packaged = Path(asset_path(f"themes/{theme_name}"))
+        return str(packaged) if packaged.is_file() else None
 
     def _apply_editor_settings(self, editor, settings: dict):
         """

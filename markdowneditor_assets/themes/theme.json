@@ -9,7 +9,8 @@
           "font": {
             "font-weight": "normal",
             "italic": false
-          }
+          },
+          "paper-color": "#1e1f22"
         }
       },
       {

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "confident-cupcake-markdown-editor"
-version = "1.9.2"
+dynamic = ["version"]
 description = "A PyQt Markdown and Python editor"
 requires-python = ">=3.11"
 dependencies = [
@@ -18,12 +18,23 @@ dependencies = [
     "ruff>=0.12,<1",
 ]
 
+[project.optional-dependencies]
+test = [
+    "build>=1.2,<2",
+    "Pillow>=10,<12",
+    "pytest>=8,<9",
+    "pytest-qt>=4.4,<5",
+]
+
 [project.gui-scripts]
 markdown-editor = "main:main"
 
 [tool.setuptools]
-py-modules = ["main", "resources_rc", "title_bar"]
+py-modules = ["main", "resources_rc"]
 include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "markdown_editor.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -33,10 +44,10 @@ include = [
     "con_term*",
     "cozy*",
     "markdown_editor*",
+    "markdowneditor_assets*",
     "python_editor*",
     "ruff_implementation*",
     "side_bar_widgets*",
-    "markdowneditor_assets*",
 ]
 
 [tool.setuptools.package-data]
