@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QSpinBox, QCheckBox, QPushButton,
     QFontComboBox, QComboBox, QFileDialog, QFormLayout, QColorDialog,
 )
+from markdowneditor_assets import asset_path
 
 # ---------------------------------------------------------------------- #
 #  Dark stylesheet - mirrors the editor's CustomDark palette so the
@@ -313,26 +314,21 @@ class SettingsDialog(QDialog):
     def _create_appearance_tab(self) -> QWidget:
         tab = QWidget()
         layout = self._style_form(QFormLayout(tab))
-        
+
         self.theme_combo = QComboBox()
-        # BUGFIX: settings_dialog.py lives in code_settings/, so
-        # Path(__file__).parent / "themes" pointed at code_settings/themes/
-        # which does not exist -> the combo stayed EMPTY. Go one level up,
-        # and honour PyInstaller's bundle dir when frozen.
-        if getattr(sys, "frozen", False):
-            themes_dir = Path(sys._MEIPASS) / "themes"
-        else:
-            themes_dir = Path(__file__).resolve().parent.parent / "themes"
+        themes_dir = Path(asset_path("themes"))
+
+        # Enumerate immutable packaged themes. A user override keeps the same
+        # filename and is resolved later by MainWindow._theme_path().
         if themes_dir.is_dir():
             for theme_file in sorted(themes_dir.glob("*.json")):
-                # userData stores the file name; both lexer classes load
-                # themes/theme.json by default, so a theme switch recreates
-                # the lexer with the chosen file instead.
                 self.theme_combo.addItem(theme_file.stem, theme_file.name)
+
+        # Never save a null theme value, even if a damaged installation has no
+        # theme data. The wheel smoke test below should catch that condition.
         if self.theme_combo.count() == 0:
-            # Fallback so the combo is never empty and saving a None
-            # theme is impossible.
             self.theme_combo.addItem("theme", "theme.json")
+
         current_theme = self.settings.get("theme") or "theme.json"
         index = self.theme_combo.findData(current_theme)
         # If the stored theme file was deleted, fall back to the first
@@ -341,7 +337,7 @@ class SettingsDialog(QDialog):
             index = 0
         self.theme_combo.setCurrentIndex(index)
         layout.addRow("Theme:", self.theme_combo)
-        
+
         # Paper color picker: a QSettings override on top of the active
         # theme's paper (theme switches do NOT reset it; the swatch shows
         # the effective color and starts from the current value).

@@ -34,7 +34,7 @@ py-modules = ["main", "resources_rc"]
 include-package-data = true
 
 [tool.setuptools.dynamic]
-version = {attr = "markdown_editor.__version__"}
+version = {attr = "markdown_python_editor.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -43,7 +43,7 @@ include = [
     "code_settings*",
     "con_term*",
     "cozy*",
-    "markdown_editor*",
+    "markdown_python_editor*",
     "markdowneditor_assets*",
     "python_editor*",
     "ruff_implementation*",

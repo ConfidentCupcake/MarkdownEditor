@@ -56,14 +56,16 @@ MARKDOWN_ALLOWED_TAGS = frozenset(
 
 MARKDOWN_ALLOWED_ATTRIBUTES = {
     "a": ["href", "title"],
-    "img": ["scr", "alt", "title"],
+    "img": ["src", "alt", "title"],
     "code": ["class"],
     "th": ["align"],
     "td": ["align"],
 }
 MARKDOWN_ALLOWED_PROTOCOLS = frozenset({"http", "https", "mailto"})
 
-PYTHON_SUFFIXES = frozenset({".py", ".pyw", "pyi"})
+# Path.suffix includes the leading dot and matching is case-insensitive.
+PYTHON_SUFFIXES = frozenset({".py", ".pyw", ".pyi"})
+
 UTF8_BOM = b"\xef\xbb\xbf"
 
 def is_python_path(path: Path) -> bool:
@@ -119,6 +121,22 @@ class MainWindow(QMainWindow):
     WIDTH = 1400
     HEIGHT = 900
 
+    @staticmethod
+    def _discover_workspace_root(folder: Path) -> Path:
+        """Return the nearest project/config root containing ``folder``.
+
+        Ruff configuration and Git roots commonly live above a selected
+        subfolder. The nearest directory containing a Ruff configuration,
+        ``pyproject.toml``, or ``.git`` wins; otherwise the selected folder is
+        itself the workspace.
+        """
+        folder = Path(folder).expanduser().resolve()
+        markers = ("pyproject.toml", "ruff.toml", ".ruff.toml", ".git")
+        for candidate in (folder, *folder.parents):
+            if any((candidate / marker).exists() for marker in markers):
+                return candidate
+        return folder
+
     def __init__(self):
         super().__init__()
         self.update_check_finished.connect(self._show_update_check_result)
@@ -161,15 +179,17 @@ class MainWindow(QMainWindow):
         else:
             # Running from source — sys.executable is the real Python
             self.python_runner.set_interpreter(self._load_interpreter())
-        # Create exactly one persistent Ruff server after the selected Python interpreter is known.
-        # The interpreter must be the same environment where 'python -m ruff --version' succeeds.
+
+        # The initial file-manager root is cwd for source/wheel launches and
+        # home for the bundled executable. Ruff must use the same project view.
+        initial_folder = Path.home() if hasattr(sys, "_MEIPASS") else Path.cwd()
+        self._workspace_root = self._discover_workspace_root(initial_folder)
+
         self.ruff_lsp_client = RuffLspClient(
             python_executable=self.python_runner.interpreter,
-            workspace_root=Path(__file__).resolve().parent,
+            workspace_root=self._workspace_root,
             parent=self,
         )
-        # Infrastructure errors must be visible; otherwise a missing Ruff package or failed server
-        # startup looks exactly like "no diagnostics" to the user.
         self.ruff_lsp_client.server_error.connect(self._on_ruff_lsp_error)
         self.ruff_lsp_client.start()
 
@@ -613,30 +633,51 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message, 8000)
 
     def _on_ruff_diagnostics(self, editor, diagnostics: list):
-        """React once when a Python tab enters or leaves an error state."""
-        had_errors = getattr(self, "_had_ruff_erroes", False)
-        has_errors = bool(diagnostics)
-        if has_errors and not had_errors:
-            self.cat.set_state("alert", 2000)
-        elif not has_errors and had_errors:
+        """React only when this editor enters or leaves an issue state.
+
+        State belongs to each editor because two tabs can have independent
+        diagnostics. The term ``issues`` deliberately includes Ruff warnings,
+        errors, and informational diagnostics, matching the previous UI intent.
+        """
+        had_issues = getattr(editor, "_had_ruff_issues", False)
+        has_issues = bool(diagnostics)
+
+        if has_issues and not had_issues:
+            self.cat.set_state("alert", 2_000)
+        elif had_issues and not has_issues:
             self.cat.add_xp(5)
-            self.cat.set_state("stretch", 1500)
-        editor._had_ruff_errors = has_errors
+            self.cat.set_state("stretch", 1_500)
 
+        editor._had_ruff_issues = has_issues
 
-    def _restart_ruff(self, python_executable: str):
-        """Replace the shared Ruff server and reconnect every Python tab."""
+    def _restart_ruff(
+            self,
+            python_executable: str | None = None,
+            workspace_root: Path | None = None,
+    ):
+        """Replace the shared Ruff server after interpreter/workspace changes.
+
+        Every open Python controller is reconnected to the new shared client.
+        The old client then performs its asynchronous LSP shutdown. No editor
+        owns a separate Ruff process.
+        """
+        executable = python_executable or self.python_runner.interpreter
+        root = Path(workspace_root or self._workspace_root).resolve()
+        self._workspace_root = root
+
         old_client = self.ruff_lsp_client
         client = RuffLspClient(
-            python_executable=python_executable,
-            workspace_root=Path(__file__).resolve().parent,
+            python_executable=executable,
+            workspace_root=root,
             parent=self,
         )
         client.server_error.connect(self._on_ruff_lsp_error)
         self.ruff_lsp_client = client
+
         for editor in self.tab_view.all_editors():
             if isinstance(editor, PythonEditor) and editor.ruff_lsp is not None:
                 editor.ruff_lsp.set_client(client)
+
         old_client.shutdown()
         client.start()
 
@@ -1615,20 +1656,22 @@ class MainWindow(QMainWindow):
             return b"\0" in f.read(1024)
 
     def set_new_tab(
-        self,
-        path: Path,
-        is_new_file=False,
-        target_group=None,
-        is_python_file=None,
+            self,
+            path: Path,
+            is_new_file=False,
+            target_group=None,
+            is_python_file=None,
     ):
-        """Open one UTF-8 document without silently changing its bytes."""
+        """Open one UTF-8 document without corrupting or duplicating it.
+
+        Binary probing, symlink resolution, byte reading, and strict decoding
+        are one I/O transaction. Every expected filesystem/encoding failure is
+        converted to a user-visible dialog instead of escaping a Qt slot.
+        """
         path = Path(path) if path is not None else None
         if is_new_file:
             return self.new_file(target_group=target_group)
         if path is None or not path.is_file():
-            return None
-        if self.is_binary(path):
-            self.statusBar().showMessage("Cannot open binary file", 2000)
             return None
 
         existing = self.tab_view.find_editor_by_path(path)
@@ -1636,26 +1679,28 @@ class MainWindow(QMainWindow):
             self.tab_view.focus_editor(existing)
             return existing
 
-        editor = self.get_editor(path=path, is_python_file=is_python_file)
         try:
+            if self.is_binary(path):
+                self.statusBar().showMessage("Cannot open binary file", 2_000)
+                return None
+
+            # Keep the logical path on the tab, but read/write the target when
+            # the logical path is a symlink so saving does not replace the link.
             target = save_target(path)
             raw = target.read_bytes()
             has_bom = raw.startswith(UTF8_BOM)
-            text = raw.decode("utf-8-sig")  # strict: never replace bad bytes
+            text = raw.decode("utf-8-sig")
         except (OSError, UnicodeDecodeError) as error:
-            QMessageBox.critical(
-                self,
-                "Open File",
-                f"Could not open '{path}':\n{error}",
-            )
-            editor.deleteLater()
+            QMessageBox.critical(self, "Open File", f"Could not open '{path}':\n{error}")
             return None
 
-        # File format state belongs to the tab and is refreshed after each save.
+        editor = self.get_editor(path=path, is_python_file=is_python_file)
         editor._utf8_bom = has_bom
         editor._disk_digest = hashlib.sha256(raw).digest()
         editor._save_target = target
 
+        # Preserve the dominant existing EOL convention rather than converting
+        # the entire file merely because it was opened and saved.
         crlf_count = raw.count(b"\r\n")
         lf_count = raw.count(b"\n") - crlf_count
         cr_count = raw.count(b"\r") - crlf_count
@@ -2234,19 +2279,31 @@ class MainWindow(QMainWindow):
         self._add_to_recent_files(str(f))
 
     def open_folder(self):
-        # open folder
-        ops = QFileDialog.Options()
-        ops |= QFileDialog.DontUseNativeDialog
-
-        new_folder = QFileDialog.getExistingDirectory(self, "Pick A Folder", "", options=ops)
-
+        """Select a project folder and retarget project-scoped services."""
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        new_folder = QFileDialog.getExistingDirectory(
+            self,
+            "Pick A Folder",
+            "",
+            options=options,
+        )
         if not new_folder:
             return
 
-        self.file_manager.model.setRootPath(new_folder)
-        self.file_manager.setRootIndex(self.file_manager.model.index(new_folder))
-        self.statusBar().showMessage(f"Opened {new_folder}", 2000)
+        selected = Path(new_folder).resolve()
+        self.file_manager.model.setRootPath(str(selected))
+        self.file_manager.setRootIndex(self.file_manager.model.index(str(selected)))
         self.file_manager.check_git_status()
+
+        new_workspace = self._discover_workspace_root(selected)
+        if new_workspace != self._workspace_root:
+            self._restart_ruff(
+                python_executable=self.python_runner.interpreter,
+                workspace_root=new_workspace,
+            )
+
+        self.statusBar().showMessage(f"Opened {selected}", 2_000)
 
     def _run_ruff_before_save(self, path: Path, text: str) -> str:
         """Apply Ruff safe fixes/formatting to every supported Python suffix."""
@@ -2298,6 +2355,32 @@ class MainWindow(QMainWindow):
             normalized = normalized.replace("\n", "\r")
         data = normalized.encode("utf-8")
         return UTF8_BOM + data if getattr(editor, "_utf8_bom", False) else data
+
+    @staticmethod
+    def _apply_formatted_text(editor, formatted: str) -> None:
+        """Apply formatter output as one undoable edit and retain the viewport.
+
+        ``setTextSafely`` is appropriate when initially loading a file, but it
+        replaces the Scintilla document and its undo history. Formatter output
+        is an edit to an existing document, so it is applied through the normal
+        replace operation inside one undo action.
+        """
+        line, column = editor.getCursorPosition()
+        first_visible = editor.firstVisibleLine()
+
+        editor.beginUndoAction()
+        try:
+            editor.selectAll()
+            editor.replace(formatted)
+        finally:
+            editor.endUndoAction()
+
+        # Formatting may change line lengths/counts. Clamp the old caret to the
+        # nearest valid location rather than leaving it outside the document.
+        target_line = min(max(line, 0), max(editor.lines() - 1, 0))
+        line_text = editor.text(target_line).rstrip("\r\n")
+        editor.setCursorPosition(target_line, min(max(column, 0), len(line_text)))
+        editor.setFirstVisibleLine(min(first_visible, target_line))
 
     def _save_editor_to_path(
         self,
@@ -2373,7 +2456,8 @@ class MainWindow(QMainWindow):
                 temporary.unlink(missing_ok=True)
 
         if formatted != original:
-            editor.setTextSafely(formatted)
+            # Retain the pre-format text as one Undo step after the save.
+            self._apply_formatted_text(editor, formatted)
         editor._save_target = target
         editor._disk_digest = hashlib.sha256(data).digest()
         self.mark_editor_clean(editor)
@@ -2408,48 +2492,58 @@ class MainWindow(QMainWindow):
         return True
 
     def save_as(self):
-        """Save under a new unique logical path and convert editor mode."""
+        """Save to a user-confirmed path and update the tab's editor type.
+
+        The native file dialog owns the intentional overwrite confirmation.
+        The source tab's disk digest belongs to its old path and must never be
+        compared with bytes at the new destination.
+        """
         editor = self.current_editor()
         if editor is None:
             return False
-        
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save As", os.getcwd())
+
+        file_path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save As",
+            os.getcwd(),
+        )
         if not file_path:
-            self.statusBar().showMessage("Cancelled", 2000)
+            self.statusBar().showMessage("Cancelled", 2_000)
             return False
-        
+
         path = Path(file_path)
         owner = self.tab_view.find_editor_by_path(path)
         if owner is not None and owner is not editor:
-            QMessageBox.warning(
-                self, "Save As",
-                "That file is already open in another tab."
-            )
+            QMessageBox.warning(self, "Save As", "That file is already open in another tab.")
             self.tab_view.focus_editor(owner)
             return False
-        
-        # The file dialog already handled intentional replacement. The old tab
-        # fingerprint belongs to the old path, so do not comapre it here.
-        if not self._save_editor_to_path(editor, path, check_external_change=True):
+
+        # The dialog confirmed replacement. Do not compare the destination to
+        # the digest of the tab's previous path.
+        if not self._save_editor_to_path(editor, path, check_external_change=False):
             return False
-        
+
         editor.path = path
         editor.full_path = path.absolute()
         self.current_file = path
         self.tab_view.set_editor_tooltip(editor, str(editor.full_path))
-        
+
         desired_class = PythonEditor if is_python_path(path) else MarkdownEditor
-        if not isinstance(editor, desired_class):
+        converted = not isinstance(editor, desired_class)
+        if converted:
             editor = self._convert_editor(editor, desired_class)
 
         if isinstance(editor, PythonEditor):
-            if editor.ruff_lsp is not None:
+            # A newly converted PythonEditor was constructed with ``path`` and
+            # already owns the correct URI. Only an existing Python editor must
+            # migrate its old Ruff URI after Python-to-Python Save As.
+            if not converted and editor.ruff_lsp is not None:
                 editor.ruff_lsp.relocate(path)
             editor.auto_completer.file_path = str(editor.full_path)
 
         self.mark_editor_clean(editor)
         self._add_to_recent_files(str(path))
-        self.statusBar().showMessage(f"Saved {path.name}", 2000)
+        self.statusBar().showMessage(f"Saved {path.name}", 2_000)
         return True
 
     def copy(self):
@@ -2599,7 +2693,12 @@ class MainWindow(QMainWindow):
         return self._convert_editor(self.current_editor(), EditorClass)
 
     def _convert_editor(self, old, EditorClass):
-        """Replace one tab's editor class without losing document state."""
+        """Replace one tab's editor class without leaking the old instance.
+
+        Document/path/display state is copied to the new editor. Dirty-set
+        migration is conditional, but retirement of the old widget is always
+        required because clean Python editors also own workers and LSP signals.
+        """
         if old is None or isinstance(old, EditorClass):
             return old
         group = self.tab_view.group_for_editor(old)
@@ -2621,12 +2720,17 @@ class MainWindow(QMainWindow):
 
         new_editor = self.get_editor(path=path, is_python_file=(EditorClass is PythonEditor))
         new_editor.setTextSafely(text)
-        # Preserve the disk-format/conflict state introduced by this fix.
         new_editor._utf8_bom = getattr(old, "_utf8_bom", False)
         new_editor._disk_digest = getattr(old, "_disk_digest", None)
         new_editor._save_target = getattr(old, "_save_target", path)
         new_editor.setEolMode(old.eolMode())
         self._connect_editor(new_editor)
+
+        # Direct insertion must reproduce MultiTabView.add_editor's focus
+        # wiring because this operation replaces an existing tab in-place.
+        new_editor.installEventFilter(self.tab_view)
+        if hasattr(new_editor, "focused"):
+            new_editor.focused.connect(self.tab_view._on_editor_focused)
 
         group.blockSignals(True)
         group.removeTab(index)
@@ -2641,14 +2745,16 @@ class MainWindow(QMainWindow):
         if was_dirty:
             self._dirty_editors.discard(old)
             self._dirty_editors.add(new_editor)
-            self._dispose_editor(old)
-            
+
+        # Always shut down and retire the removed editor. Keeping this outside
+        # the dirty branch fixes the clean-conversion worker/widget leak.
+        self._dispose_editor(old)
+
         new_editor.setCursorPosition(line, column)
         if selection[0] >= 0:
             new_editor.setSelection(*selection)
         new_editor.setFirstVisibleLine(first_visible)
         if was_current:
-            new_editor.setFocus()
             self.tab_view.focus_editor(new_editor)
         return new_editor
 
@@ -2671,9 +2777,10 @@ class MainWindow(QMainWindow):
         self.find_bar.set_search_text(selected)
         self.find_bar.show_replace()
         self._position_find_bar()
-        
+
     @staticmethod
     def _compile_find_pattern(text, case_sensitive, whole_word, regex):
+        """Compile one search expression using the UI option semantics."""
         expression = text if regex else re.escape(text)
         if whole_word:
             expression = rf"\b(?:{expression})\b"
@@ -2681,7 +2788,45 @@ class MainWindow(QMainWindow):
         return re.compile(expression, flags)
 
     @staticmethod
+    def _validated_matches(pattern, source: str):
+        """Return matches or reject any expression producing an empty range.
+
+        Empty matches cannot be represented as a progressing QScintilla
+        selection. Rejecting the whole operation gives Find, Replace, and
+        Replace All one predictable policy and prevents repeated matches at the
+        same cursor position.
+        """
+        matches = list(pattern.finditer(source))
+        if any(match.start() == match.end() for match in matches):
+            raise ValueError("Patterns that produce zero-length matches are not supported")
+        return matches
+
+    @staticmethod
+    def _validate_regex_replacement(pattern, replacement: str, regex: bool) -> None:
+        """Parse a regex replacement before modifying the document.
+
+        ``Pattern.sub`` validates group references even when its subject has no
+        match. Literal replacement mode intentionally skips this parsing.
+        """
+        if regex:
+            pattern.sub(replacement, "", count=0)
+
+    def _search_inputs(self, text, case_sensitive, whole_word, regex):
+        """Compile and match once, converting input errors to a status message."""
+        editor = self.current_editor()
+        if editor is None:
+            return None
+        try:
+            pattern = self._compile_find_pattern(text, case_sensitive, whole_word, regex)
+            matches = self._validated_matches(pattern, editor.text())
+        except (re.error, ValueError) as error:
+            self.statusBar().showMessage(f"Invalid search: {error}", 4_000)
+            return None
+        return editor, pattern, matches
+
+    @staticmethod
     def _offset_to_line_column(source: str, offset: int):
+        """Convert a Python string offset to a zero-based line/column pair."""
         prefix = source[:offset]
         line = prefix.count("\n")
         previous_newline = prefix.rfind("\n")
@@ -2690,126 +2835,127 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _line_column_to_offset(source: str, line: int, column: int) -> int:
-        lines = source.splitlines(True)
-        line = max(0, min(line, max(0, len(lines) - 1)))
-        return sum(len(part) for part in lines[:line]) + max(0, column)
+        """Convert a clamped zero-based line/column pair to a string offset."""
+        lines = source.splitlines(True) or [""]
+        line = max(0, min(line, len(lines) - 1))
+        visible_length = len(lines[line].rstrip("\r\n"))
+        column = max(0, min(column, visible_length))
+        return sum(len(part) for part in lines[:line]) + column
 
     def _select_python_match(self, editor, match):
+        """Select and reveal one validated non-empty regex match."""
         source = editor.text()
         start_line, start_column = self._offset_to_line_column(source, match.start())
         end_line, end_column = self._offset_to_line_column(source, match.end())
         editor.setSelection(start_line, start_column, end_line, end_column)
         editor.ensureLineVisible(start_line)
-        
+
     def _do_find_next(self, text, case_sensitive, whole_word, regex):
-        editor = self.current_editor()
-        if editor is None:
+        """Select the next match, wrapping once at the document end."""
+        result = self._search_inputs(text, case_sensitive, whole_word, regex)
+        if result is None:
             return
-        try:
-            pattern = self._compile_find_pattern(
-                text, case_sensitive, whole_word, regex
-            )
-        except re.error as error:
-            self.statusBar().showMessage(f"Invalid regex: {error}", 4000)
+        editor, _pattern, matches = result
+        if not matches:
+            self.statusBar().showMessage("No matches", 2_000)
             return
 
         source = editor.text()
         if editor.hasSelectedText():
-            _line_from, _column_from, line, column = editor.getSelection()
+            _start_line, _start_column, line, column = editor.getSelection()
         else:
             line, column = editor.getCursorPosition()
         cursor_offset = self._line_column_to_offset(source, line, column)
-        match = pattern.search(source, cursor_offset) or pattern.search(source, 0, cursor_offset)
-        if match:
-            self._select_python_match(editor, match)
+
+        match = next(
+            (candidate for candidate in matches if candidate.start() >= cursor_offset),
+            matches[0],
+        )
+        self._select_python_match(editor, match)
 
     def _do_find_prev(self, text, case_sensitive, whole_word, regex):
-        """Search backward from the current cursor position."""
-        editor = self.current_editor()
-        if editor is None:
+        """Select the previous match, wrapping once at the document start."""
+        result = self._search_inputs(text, case_sensitive, whole_word, regex)
+        if result is None:
             return
-        try:
-            pattern = self._compile_find_pattern(
-                text, case_sensitive, whole_word, regex
-            )
-        except re.error as error:
-            self.statusBar().showMessage(f"invallid regex: {error}", 4000)
+        editor, _pattern, matches = result
+        if not matches:
+            self.statusBar().showMessage("No matches", 2_000)
             return
+
         source = editor.text()
         if editor.hasSelectedText():
-            line, column, _line_to, _column_to = editor.getSelection()
+            line, column, _end_line, _end_column = editor.getSelection()
         else:
             line, column = editor.getCursorPosition()
         cursor_offset = self._line_column_to_offset(source, line, column)
-        matches = list(pattern.finditer(source, 0, cursor_offset))
-        if not matches:
-            matches = list(pattern.finditer(source, cursor_offset))
-        if matches:
-            self._select_python_match(editor, matches[-1])
+        before = [candidate for candidate in matches if candidate.end() <= cursor_offset]
+        self._select_python_match(editor, before[-1] if before else matches[-1])
 
     def _do_replace(self, find_text, replace_text, case_sensitive, whole_word, regex):
-        editor = self.current_editor()
-        if editor is None:
+        """Replace the selected full match, then select the next match."""
+        result = self._search_inputs(
+            find_text,
+            case_sensitive,
+            whole_word,
+            regex,
+        )
+        if result is None:
             return
+        editor, pattern, _matches = result
+
         try:
-            pattern = self._compile_find_pattern(
-                find_text, case_sensitive, whole_word, regex
-            )
+            self._validate_regex_replacement(pattern, replace_text, regex)
+            selected = editor.selectedText() if editor.hasSelectedText() else ""
+            match = pattern.fullmatch(selected) if selected else None
+            if match is not None:
+                replacement = match.expand(replace_text) if regex else replace_text
+                editor.replace(replacement)
         except re.error as error:
-            self.statusBar().showMessage(f"Invalid regex: {error}", 4000)
+            self.statusBar().showMessage(f"Invalid replacement: {error}", 4_000)
             return
 
-        selected = editor.selectedText() if editor.hasSelectedText() else ""
-        match = pattern.fullmatch(selected) if selected else None
-        if match:
-            replacement = match.expand(replace_text) if regex else replace_text
-            editor.replace(replacement)
-        self._do_find_next(
-            find_text, case_sensitive, whole_word, regex
-        )
+        self._do_find_next(find_text, case_sensitive, whole_word, regex)
 
     def _do_replace_all(self, find_text, replace_text, case_sensitive, whole_word, regex):
-        editor = self.current_editor()
-        if editor is None:
+        """Replace all validated matches as one undoable editor operation."""
+        result = self._search_inputs(
+            find_text,
+            case_sensitive,
+            whole_word,
+            regex,
+        )
+        if result is None:
             return
+        editor, pattern, matches = result
+
         try:
-            pattern = self._compile_find_pattern(
-                find_text, case_sensitive, whole_word, regex
-            )
+            self._validate_regex_replacement(pattern, replace_text, regex)
         except re.error as error:
-            self.statusBar().showMessage(f"Invalid regex: {error}", 4000)
-            return
-        if pattern.match("") is not None:
-            self.statusBar().showMessage(
-                "Zero-length regex cannot be replaced", 4000
-            )
+            self.statusBar().showMessage(f"Invalid replacement: {error}", 4_000)
             return
 
         source = editor.text()
-        matches = list(pattern.finditer(source))
-        count = len(matches)
-        if matches:
-            # Replace from the end so earlier offsets remain valid. Using
-            # QScintilla selection/replace keeps the whole operation undoable.
-            editor.beginUndoAction()
-            try:
-                for match in reversed(matches):
-                    start_line, start_column = self._offset_to_line_column(
-                        source, match.start()
-                    )
-                    end_line, end_column = self._offset_to_line_column(
-                        source, match.end()
-                    )
-                    editor.setSelection(
-                        start_line, start_column, end_line, end_column
-                    )
-                    replacement = (
-                        match.expand(replace_text) if regex else replace_text
-                    )
-                    editor.replace(replacement)
-            finally:
-                editor.endUndoAction()
-        self.statusBar().showMessage(f"Replaced {count} occurrences", 3000)
+        editor.beginUndoAction()
+        try:
+            # Work backward so each earlier Python offset remains valid after a
+            # later replacement changes the document length.
+            for match in reversed(matches):
+                start_line, start_column = self._offset_to_line_column(
+                    source,
+                    match.start(),
+                )
+                end_line, end_column = self._offset_to_line_column(
+                    source,
+                    match.end(),
+                )
+                editor.setSelection(start_line, start_column, end_line, end_column)
+                replacement = match.expand(replace_text) if regex else replace_text
+                editor.replace(replacement)
+        finally:
+            editor.endUndoAction()
+
+        self.statusBar().showMessage(f"Replaced {len(matches)} occurrences", 3_000)
 
     def _background_work_running(self) -> bool:
         git_worker = getattr(getattr(self, "file_manager", None), "git_checker", None)

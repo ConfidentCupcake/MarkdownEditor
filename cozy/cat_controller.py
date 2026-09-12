@@ -40,18 +40,11 @@ from PyQt5.QtCore import Qt, QTimer, QSettings, pyqtSignal
 from PyQt5.QtGui import QFont, QPainter, QPixmap, QColor
 from PyQt5.QtWidgets import QLabel
 
+from markdowneditor_assets import asset_path
 
-def _resource_path(relative_path):
-    """
-    PyInstaller-safe path helper (same contract as main.py's resource_path).
-
-    :param relative_path: path relative to the app root, e.g. "icons/cat"
-    :return: absolute path that works both in source runs and in a
-             frozen (--onefile) build
-    """
-    root = (Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS")
-            else Path(__file__).resolve().parent.parent)
-    return str(root / relative_path)
+def _resource_path(relative_path: str) -> str:
+    """Resolve cat frames from the installed asset package."""
+    return asset_path(relative_path)
 
 
 # --------------------------------------------------------------------- #

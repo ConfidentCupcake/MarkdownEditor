@@ -21,6 +21,8 @@ from PyQt5.QtCore import Qt, QTimer, QPoint
 from PyQt5.QtGui import QCursor, QPixmap
 from PyQt5.QtWidgets import QLabel, QApplication
 
+from markdowneditor_assets import asset_path
+
 DISPLAY_SIZE = 64
 IDLE_MS = 30 * 1000      # 30 s of nothing -> cat wakes up
 STEP_PX = 6              # px per 80 ms tick -> calm stroll, not a dash
@@ -28,11 +30,9 @@ STEP_PX = 6              # px per 80 ms tick -> calm stroll, not a dash
 ASCII_WALK = [" =( o.o )>", "<( o.o )= "]   # ASCII; swap for PNGs later
 ASCII_NAP = " ( -w- ) zzz" 
 
-def _resource_path(relative_path):
-    """PyInstaller-safe path helper (same contract as main.py's)."""
-    root = (Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS")
-            else Path(__file__).resolve().parent.parent)
-    return str(root / relative_path)
+def _resource_path(relative_path: str) -> str:
+    """Resolve Neko sprite sheets from the installed asset package."""
+    return asset_path(relative_path)
 
 
 class NekoChaser(QLabel):

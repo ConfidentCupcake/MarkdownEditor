@@ -203,7 +203,12 @@ class MarkdownCustomLexer(NeutronLexer):
         return stripped[count:].strip() == ""
 
     def _state_before(self, full_text: str, start_char: int):
-        """Compute fence/comment state while continuing after closed comments."""
+        """Compute fence/comment state immediately before ``start_char``.
+
+        Fenced code has precedence over HTML comment markers. Outside a fence,
+        comment spans are removed only for the purpose of recognizing a fence;
+        inside a fence, ``<!--`` and ``-->`` are ordinary code text.
+        """
         prefix = full_text[:start_char]
         in_fence = False
         in_comment = False
@@ -211,6 +216,13 @@ class MarkdownCustomLexer(NeutronLexer):
         fence_len = 0
 
         for line in prefix.split("\n"):
+            if in_fence:
+                if self._is_closing_fence(line, fence_char, fence_len):
+                    in_fence = False
+                    fence_char = None
+                    fence_len = 0
+                continue
+
             cursor = 0
             visible_parts = []
             while cursor < len(line):
@@ -222,6 +234,7 @@ class MarkdownCustomLexer(NeutronLexer):
                     in_comment = False
                     cursor = close + 3
                     continue
+
                 opening = line.find("<!--", cursor)
                 if opening < 0:
                     visible_parts.append(line[cursor:])
@@ -235,12 +248,11 @@ class MarkdownCustomLexer(NeutronLexer):
 
             visible = "".join(visible_parts)
             char, count = self._fence_line(visible)
-            if char is None:
-                continue
-            if not in_fence:
-                in_fence, fence_char, fence_len = True, char, count
-            elif char == fence_char and self._is_closing_fence(visible, fence_char, fence_len):
-                in_fence, fence_char, fence_len = False, None, 0
+            if char is not None:
+                in_fence = True
+                fence_char = char
+                fence_len = count
+
         return in_fence, fence_char, fence_len, in_comment
 
     # ------------------------------------------------------------------ #
@@ -555,9 +567,44 @@ class MarkdownCustomLexer(NeutronLexer):
         self._style_inline()
 
     def _style_line_with_comments(
-        self, line, in_fence, fence_char, fence_len, in_comment, force_inline
+            self,
+            line,
+            in_fence,
+            fence_char,
+            fence_len,
+            in_comment,
+            force_inline,
     ):
-        """Style only comment spans, then resume Markdown for surrounding text."""
+        """Style comments outside fences and code inside fences.
+
+        Returning all four state values keeps incremental restyling consistent
+        when QScintilla begins a styling request in the middle of a document.
+        """
+        if in_fence:
+            in_fence, fence_char, fence_len = self._style_line(
+                line,
+                in_fence,
+                fence_char,
+                fence_len,
+                force_inline=force_inline,
+            )
+            return in_fence, fence_char, fence_len, False
+
+        # Recognize an opening fence from the complete line before looking for
+        # comment markers in its info string. Everything after the opening
+        # backticks/tildes is fence metadata, not a Markdown HTML comment.
+        if not in_comment and not force_inline:
+            opening_char, _opening_len = self._fence_line(line)
+            if opening_char is not None:
+                in_fence, fence_char, fence_len = self._style_line(
+                    line,
+                    in_fence,
+                    fence_char,
+                    fence_len,
+                    force_inline=False,
+                )
+                return in_fence, fence_char, fence_len, False
+
         cursor = 0
         while cursor < len(line):
             if in_comment:
@@ -584,6 +631,7 @@ class MarkdownCustomLexer(NeutronLexer):
                 return in_fence, fence_char, fence_len, False
             cursor = opening
             in_comment = True
+
         return in_fence, fence_char, fence_len, in_comment
     
     def _maybe_style_task_marker(self):

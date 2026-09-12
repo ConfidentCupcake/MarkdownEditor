@@ -9,6 +9,7 @@ import builtins
 import os
 import sys
 from pathlib import Path
+from markdowneditor_assets import asset_path
 
 try:
     from lexer_fast import style_chunk as _cython_style
@@ -17,10 +18,9 @@ try:
 except ImportError:
     _HAS_CYTHON = False
 
-def _resource_path(relative_path):
-    root = (Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS")
-            else Path(__file__).resolve().parent.parent)
-    return str(root / relative_path)
+def _resource_path(relative_path: str) -> str:
+    """Compatibility wrapper around the shared packaged-asset resolver."""
+    return asset_path(relative_path)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 

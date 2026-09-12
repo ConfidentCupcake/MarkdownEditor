@@ -35,3 +35,12 @@ crash_log.txt
 
 # Icons (optional — keep these if you want them in the repo)
 # icons/
+
+# Tool/test caches
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Wheel output
+*.whl

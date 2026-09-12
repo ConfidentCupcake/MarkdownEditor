@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QTreeView,
 )
-
+from markdowneditor_assets import asset_path
 class FileManager(QTreeView):
     def __init__(self, set_new_tab, main_window, parent=None):
         super(FileManager, self).__init__(None)
@@ -152,16 +152,12 @@ class FileManager(QTreeView):
             pass
 
     def show_dialog(self, title, msg) -> int:
+        """Display a consistently styled destructive-operation prompt."""
         dialog = QMessageBox(self)
         dialog.setFont(self.manager_font)
         dialog.font().setPointSize(13)
         dialog.setWindowTitle(title)
-        root = (
-            Path(sys._MEIPASS)
-            if getattr(sys, "frozen", False)
-            else Path(__file__).resolve().parent.parent
-        )
-        dialog.setWindowIcon(QIcon(str(root / "icons" / "close-icon.svg")))
+        dialog.setWindowIcon(QIcon(asset_path("icons/close-icon.svg")))
         dialog.setText(msg)
         dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         dialog.setDefaultButton(QMessageBox.No)
@@ -207,14 +203,27 @@ class FileManager(QTreeView):
         self.is_renaming = True
         self.edit(ix)
 
+    @staticmethod
+    def _path_exists(path: Path) -> bool:
+        """Return true for normal paths and broken symbolic links."""
+        return os.path.lexists(path)
+
     def delete_file(self, path: Path):
-        if path.is_dir():
+        """Delete exactly ``path``; never follow a directory symlink."""
+        if path.is_symlink():
+            path.unlink()
+        elif path.is_dir():
             shutil.rmtree(path)
         else:
             path.unlink()
 
     def action_delete(self, index: QModelIndex):
-        """Confirm the exact selection, then close all editors before deletion."""
+        """Stage all paths, then close tabs and commit permanent deletion.
+
+        Prompts occur before touching disk, but tabs remain alive until every
+        staging rename succeeds. A failed stage can therefore restore paths
+        without losing editor widgets or discarded in-memory buffers.
+        """
         if not index.isValid():
             return
 
@@ -228,11 +237,10 @@ class FileManager(QTreeView):
             rows = [index]
 
         selected = [(Path(self.model.filePath(row)), self.model.isDir(row)) for row in rows]
-        # A selected parent already contains its selected descendants.
         targets = [
             (path, is_dir)
             for path, is_dir in selected
-            if not any(other != path and other in path.parents for other, _other_is_dir in selected)
+            if not any(other != path and other in path.parents for other, _ in selected)
         ]
         label = f"'{targets[0][0].name}'" if len(targets) == 1 else f"{len(targets)} selected items"
         answer = self.show_dialog(
@@ -242,21 +250,18 @@ class FileManager(QTreeView):
         if answer != QMessageBox.Yes:
             return
 
-        # Phase 1: finish every editor prompt before touching the filesystem.
+        # Gather all Save/Discard/Cancel decisions first. Save is performed now;
+        # Discard does not close the editor until staging succeeds.
         for path, is_directory in targets:
             if not self.main_window.can_close_editors_for_path(path, is_directory=is_directory):
                 return
 
-        # Phase 2: close the already-approved editors.
-        for path, is_directory in targets:
-            self.main_window.close_editors_for_path(path, is_directory=is_directory, prompt=False)
-
-        # Phase 3: atomically rename every target out of view. If any rename
-        # fails, restore all earlier names; the requested set stays intact.
         staged = []
         try:
             for path, _is_directory in targets:
-                temporary = path.with_name(f".{path.name}.markdowneditor-delete-{uuid4().hex}")
+                temporary = path.with_name(
+                    f".{path.name}.markdowneditor-delete-{uuid4().hex}"
+                )
                 path.rename(temporary)
                 staged.append((path, temporary))
         except OSError as error:
@@ -275,19 +280,28 @@ class FileManager(QTreeView):
             )
             return
 
-        # Cleanup begins only when the whole set is staged. If cleanup fails,
-        # the hidden staging name remains available for recovery.
+        # Every disk target is now staged. Closing cannot invalidate rollback,
+        # and no prompt is repeated because decisions were collected above.
+        for path, is_directory in targets:
+            self.main_window.close_editors_for_path(
+                path,
+                is_directory=is_directory,
+                prompt=False,
+            )
+
         cleanup_errors = []
         for original, temporary in staged:
             try:
                 self.delete_file(temporary)
             except OSError as error:
+                # The hidden staged path remains available for manual recovery.
                 cleanup_errors.append(f"{original.name}: {error}")
         if cleanup_errors:
             QMessageBox.critical(
                 self,
                 "Delete cleanup",
-                "Some staged recovery items could not be removed:\n" + "\n".join(cleanup_errors),
+                "Some staged recovery items could not be removed:\n"
+                + "\n".join(cleanup_errors),
             )
                 
     def action_new_file(self, ix: QModelIndex):
@@ -340,7 +354,12 @@ class FileManager(QTreeView):
             QMessageBox.warning(self, "Open in file manager", str(error))
 
     def dropEvent(self, event: QDropEvent) -> None:
-        """Validate the complete batch before moving or copying anything."""
+        """Move/copy a validated batch without dereferencing symlink sources.
+
+        Lexical paths identify the filesystem objects being manipulated.
+        Resolved paths are used only for directory-containment validation.
+        Copying a symlink preserves the link; moving a symlink moves the link.
+        """
         if not event.mimeData().hasUrls():
             event.ignore()
             return
@@ -355,21 +374,39 @@ class FileManager(QTreeView):
         copy_requested = bool(event.keyboardModifiers() & Qt.ControlModifier)
         operations = []
         try:
+            resolved_target_dir = target_dir.resolve(strict=True)
             for url in event.mimeData().urls():
-                source = Path(url.toLocalFile()).resolve(strict=True)
-                destination = (target_dir / source.name).resolve(strict=False)
+                # absolute() preserves a symlink's identity; resolve() would
+                # silently turn the operation into one on its target.
+                source = Path(url.toLocalFile()).absolute()
+                if not self._path_exists(source):
+                    raise FileNotFoundError(f"Source does not exist: {source}")
+
+                destination = target_dir / source.name
                 if source == destination:
                     continue
-                if source.is_dir() and source in destination.parents:
-                    raise OSError("Cannot copy a folder into itself")
-                if destination.exists():
+                if self._path_exists(destination):
                     raise FileExistsError(f"Destination already exists: {destination}")
+
+                # A real directory cannot be copied/moved into itself. A
+                # directory symlink is treated as a link object, not traversed.
+                if source.is_dir() and not source.is_symlink():
+                    resolved_source = source.resolve(strict=True)
+                    resolved_destination = (resolved_target_dir / source.name).resolve(
+                        strict=False
+                    )
+                    if resolved_source in resolved_destination.parents:
+                        raise OSError("Cannot copy a folder into itself")
                 operations.append((source, destination))
 
             completed = []
             for source, destination in operations:
                 if copy_requested:
-                    if source.is_dir():
+                    if source.is_symlink():
+                        # copy2(..., follow_symlinks=False) recreates the link
+                        # rather than copying the target's bytes/tree.
+                        shutil.copy2(source, destination, follow_symlinks=False)
+                    elif source.is_dir():
                         shutil.copytree(source, destination)
                     else:
                         shutil.copy2(source, destination)
@@ -382,7 +419,7 @@ class FileManager(QTreeView):
                 try:
                     if copy_requested:
                         self.delete_file(destination)
-                    elif destination.exists() and not source.exists():
+                    elif self._path_exists(destination) and not self._path_exists(source):
                         shutil.move(str(destination), str(source))
                 except OSError as rollback_error:
                     rollback_errors.append(str(rollback_error))

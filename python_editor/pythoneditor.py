@@ -21,6 +21,14 @@ from ruff_implementation.ruff_lsp_controller import RuffLspController
 
 SCI_AUTOCACTIVE = 2102
 
+# A Unicode Python identifier or dotted identifier chain at the end of the
+# text immediately before an opening parenthesis. ``[^\W\d]`` means a Unicode
+# word character except digits, so digits remain legal after the first char.
+CALLABLE_CHAIN_RE = re.compile(
+    r"(?:[^\W\d]\w*)(?:\.(?:[^\W\d]\w*))*$",
+    re.UNICODE,
+)
+
 class PythonEditor(QsciScintilla):
     goto_definition_requested = pyqtSignal(str, int, int)
     focused = pyqtSignal(object)
@@ -400,42 +408,77 @@ class PythonEditor(QsciScintilla):
             self.setCursorPosition(new_line, len(desired_indent))
         finally:
             self.endUndoAction()
-    
-    
-    def keyPressEvent(self, e: QKeyEvent) -> None:
-        if e.key() == Qt.Key.Key_F12:
+
+    @staticmethod
+    def _has_callable_before_parenthesis(text: str) -> bool:
+        """Return true when ``text`` ends in a valid callable name chain.
+
+        The callable may follow indentation, assignment, an operator, or a
+        nested opening parenthesis. It must not start in the middle of another
+        identifier/number/dotted token.
+        """
+        match = CALLABLE_CHAIN_RE.search(text.rstrip())
+        if match is None:
+            return False
+        if match.start() == 0:
+            return True
+
+        previous = text[match.start() - 1]
+        return not (previous.isalnum() or previous in "_.")
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Handle editor shortcuts, indentation, and signature scheduling."""
+        if event.key() == Qt.Key.Key_F12:
             self.goto_definition()
             return
-        if e.modifiers() == Qt.KeyboardModifier.ControlModifier and e.key() == Qt.Key.Key_Space:
-            if self.is_python_file:
-                pos = self.getCursorPosition()
-                self._manual_completion_generation = self.auto_completer.get_completions(
-                    pos[0] + 1, pos[1], self.text()
-                )
-                return
-        if e.modifiers() == Qt.KeyboardModifier.ControlModifier and e.key() == Qt.Key.Key_X:  # Cut Shortcut
-            if not self.hasSelectedText():
-                line, index = self.getCursorPosition()
-                self.setSelection(line, 0, line, self.lineLength(line))
-                self.cut()
-                return
-        
-        if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self.SendScintilla(SCI_AUTOCACTIVE):
-            return super().keyPressEvent(e)        
-        
-        if self.is_python_file and e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and e.modifiers() == Qt.KeyboardModifier.NoModifier and not self.hasSelectedText():
+
+        if (
+                event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                and event.key() == Qt.Key.Key_Space
+                and self.is_python_file
+        ):
+            line, column = self.getCursorPosition()
+            self._manual_completion_generation = self.auto_completer.get_completions(
+                line + 1,
+                column,
+                self.text(),
+            )
+            return
+
+        if (
+                event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                and event.key() == Qt.Key.Key_X
+                and not self.hasSelectedText()
+        ):
+            line, _column = self.getCursorPosition()
+            self.setSelection(line, 0, line, self.lineLength(line))
+            self.cut()
+            return
+
+        if (
+                event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and self.SendScintilla(SCI_AUTOCACTIVE)
+        ):
+            return super().keyPressEvent(event)
+
+        if (
+                self.is_python_file
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and not self.hasSelectedText()
+        ):
             self._handle_python_return()
             return
 
-        if e.text() == "(" and self.is_python_file and not self._shutting_down:
-            line, index = self.getCursorPosition()
-            before = self.text(line)[:index].rstrip()
-            # Validate the complete trailing identifier, not only its last
-            # character. Digits are legal after the first identifier character.
-            if re.search(r"(?:^|\.)[A-Za-z_]\w*$", before):
+        if event.text() == "(" and self.is_python_file and not self._shutting_down:
+            line, column = self.getCursorPosition()
+            before = self.text(line)[:column]
+            if self._has_callable_before_parenthesis(before):
+                # Let the base handler insert '(' first. The delayed lookup then
+                # sees the cursor/source state Jedi expects.
                 QTimer.singleShot(50, self._trigger_signature_help)
 
-        return super().keyPressEvent(e)
+        return super().keyPressEvent(event)
 
     def _trigger_signature_help(self):
         """Run Jedi signature lookup at the current cursor position."""
