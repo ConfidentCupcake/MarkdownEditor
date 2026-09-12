@@ -170,7 +170,7 @@ def _py_compute_state(text, target_pos):
                 escape_next = 0
                 i += 1
                 continue
-            if c == "\\" and not triple_string:
+            if c == "\\":
                 escape_next = 1
                 i += 1
                 continue
@@ -456,7 +456,7 @@ def _py_style_chunk(text, start, end, prev_state, keywords, builtins, magic_meth
                 escape_next = 0
                 results.append((i - token_start, string_style))
                 continue
-            if c == "\\" and not triple_string:
+            if c == "\\":
                 i += 1
                 escape_next = 1
                 results.append((1, string_style))

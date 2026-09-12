@@ -247,7 +247,7 @@ def compute_state_before(bytes text, int target_pos):
                 escape_next = 0
                 i += 1
                 continue
-            if c == 92 and not triple_string:
+            if c == 92:
                 escape_next = 1
                 i += 1
                 continue
@@ -598,7 +598,7 @@ def style_chunk(bytes text, int start, int end, int prev_state,
                 results.append((i - token_start, string_style))
                 continue
 
-            if c == 92 and not triple_string:
+            if c == 92:
                 i += 1
                 escape_next = 1
                 results.append((1, string_style))
