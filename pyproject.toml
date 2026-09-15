@@ -16,6 +16,9 @@ dependencies = [
     "PyQtWebEngine>=5.15,<6",
     "QScintilla>=2.14,<3",
     "ruff>=0.12,<1",
+    "ptyprocess>=0.7,<1; sys_platform != 'win32'",
+    "pyte>=0.8.2,<1",
+    "pywinpty>=3.0,<4; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
