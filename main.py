@@ -196,6 +196,7 @@ class MainWindow(QMainWindow):
         self.ruff_lsp_client.start()
 
         self.console = None  # will be created in set_up_console_dock
+        self.terminal = None
         self.python_editor_active = False
         self.current_file = None
         self.md = markdown.Markdown(
@@ -627,13 +628,13 @@ class MainWindow(QMainWindow):
         
         # Terminal (new)
         self.terminal = TerminalWidget(parent=self, working_directory=terminal_directory)
-        terminal_dock = QDockWidget("Terminal", self)
-        terminal_dock.setWidget(self.terminal)
-        terminal_dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
-        self.addDockWidget(Qt.BottomDockWidgetArea, terminal_dock)
+        t_dock = QDockWidget("Terminal", self)
+        t_dock.setWidget(self.terminal)
+        t_dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
+        self.addDockWidget(Qt.BottomDockWidgetArea, t_dock)
 
-        terminal_dock.hide()
-        self.terminal_dock = terminal_dock
+        t_dock.hide()
+        self.terminal_dock = t_dock
 
     def get_sidebar_label(self, path, name):
         label = QLabel(self)
@@ -944,9 +945,9 @@ class MainWindow(QMainWindow):
         toggle_console_action.triggered.connect(self.toggle_console)
 
         toggle_terminal_action = view_menu.addAction("Toggle Terminal")
-        toggle_terminal_action.setShortcut("Ctrl+Shift+T")
+        toggle_terminal_action.setShortcut("Ctrl+Shift+]")
         toggle_terminal_action.setShortcutContext(Qt.ApplicationShortcut)
-        toggle_terminal_action.triggered.connect(self._toggle_terminal)
+        toggle_terminal_action.triggered.connect(self.toggle_terminal)
 
         view_menu.addSeparator()
 
@@ -1045,10 +1046,6 @@ class MainWindow(QMainWindow):
 
     def unsplit_active_group(self):
         self.tab_view.unsplit_active_group()
-
-    def _toggle_terminal(self):
-        """Show or hide the terminal dock"""
-        self.terminal_dock.setVisible(not self.terminal_dock.isVisible())
     
     def _toggle_git_history(self) -> None:
         """Show or hide Git history dock created during startup."""
@@ -1067,7 +1064,6 @@ class MainWindow(QMainWindow):
         editor.setCursorPosition(line, column)
         editor.ensureLineVisible(line)
         editor.setFocus()
-
 
 
     def save_all(self):
@@ -1292,6 +1288,13 @@ class MainWindow(QMainWindow):
             self.console_dock.hide()
         else:
             self.console_dock.show()
+
+    def toggle_terminal(self):
+        """Show or hide the terminal dock"""
+        if self.terminal_dock.isVisible():
+            self.terminal_dock.hide()
+        else:
+            self.terminal_dock.show()
 
     def _current_python_editor(self):
         """Return a runnable Python editor or show one consistent message."""
@@ -1860,7 +1863,7 @@ class MainWindow(QMainWindow):
         # --- Setup for labels
         self.sidebar_labels = {}
 
-        folder_label = self.get_sidebar_label(resource_path("icons/folder.png"), "folder")
+        folder_label = self.get_sidebar_label(resource_path("icons/folder-active.png"), "folder")
         self.sidebar_labels["folder"] = folder_label
         side_bar_layout.addWidget(folder_label)
 
@@ -1869,9 +1872,13 @@ class MainWindow(QMainWindow):
         side_bar_layout.addWidget(search_label)
         self.side_bar.setLayout(side_bar_layout)
 
-        outline_label = self.get_sidebar_label(resource_path("icons/code.png"), "outline")
+        outline_label = self.get_sidebar_label(resource_path("icons/outline.png"), "outline")
         self.sidebar_labels["outline"] = outline_label
         side_bar_layout.addWidget(outline_label)
+
+        terminal_label = self.get_sidebar_label(resource_path("icons/terminal.png"), "terminal")
+        self.sidebar_labels["terminal"] = terminal_label
+        side_bar_layout.addWidget(terminal_label)
 
         self.outline_tree = CodeOutlineTree()
         self.outline_tree.symbol_clicked.connect(self._goto_symbol)
@@ -2283,16 +2290,15 @@ class MainWindow(QMainWindow):
             "search": self.search_frame,
             "outline": self.outline_frame,
         }
-        # Update icoon states. Reset all to gray, then set active to blue
+        # Update icon states. Reset all to gray, then set active to blue
         icon_map = {
             "folder": (resource_path("icons/folder.png"), resource_path(
                 "icons/folder-active.png")),
             "search": (resource_path("icons/search.png"), resource_path(
                 "icons/search-active.png")),
             "outline": (
-                resource_path("icons/code.png"),
-                resource_path("icons/code-active.png"),
-            ),
+                resource_path("icons/outline.png"),
+                resource_path("icons/outline-active.png")),
         }
         # Reset all sidebar icons to inactive gray
         for name, (inactive, active) in icon_map.items():
