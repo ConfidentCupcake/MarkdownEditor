@@ -398,7 +398,10 @@ def _py_style_chunk(text, start, end, prev_state, keywords, builtins, magic_meth
                 continue
             if c.isalpha() or c == "_":
                 token_start = i
-                while i < end and (text[i:i + 1].decode("latin-1").isalnum() or text[i:i + 1].decode("latin-1") == "_"):
+                while i < end and (
+                    text[i:i + 1].decode("latin-1").isalnum()
+                    or text[i:i + 1].decode("latin-1") in (".", "_")
+                ):
                     i += 1
                 token = text[token_start:i].decode("utf-8", errors="replace")
                 followed_by_paren = i < end and text[i:i + 1].decode("latin-1") == "("
@@ -419,8 +422,12 @@ def _py_style_chunk(text, start, end, prev_state, keywords, builtins, magic_meth
                 continue
             if c.isdigit():
                 token_start = i
-                while i < end and (text[i:i + 1].decode("latin-1").isalnum() or text[i:i + 1].decode("latin-1") == "."):
+                while i < end and (
+                    text[i:i + 1].decode("latin-1").isalnum()
+                    or text[i:i + 1].decode("latin-1") in (".", "_")
+                ):
                     i += 1
+
                 results.append((i - token_start, S_NUMBERS))
                 continue
             if c in "+-*/%=<>!&|^~":

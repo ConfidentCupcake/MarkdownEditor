@@ -100,7 +100,20 @@ class _PtySession(QThread):
                     "PTY support requires ptyprocess. "
                     "Run: python -m pip install -e ."
                 ) from error
-        return PtyProcessUnicode
+        
+        class SafePtyProcessUnicode(PtyProcessUnicode):
+            """
+            Decode malformed shell output without terminating the worker.
+            """
+            def __init__(self, pid: int, fd: int) -> None:
+                """
+                Configure the decoder used by the process reader.
+                """
+                # PtyProcessUnicode.spawn() calls cls(pid, fd). The subclass supplies
+                # the safe decoder arguments at that constructor boundary.
+                super().__init__(pid, fd, encoding="utf-8", codec_errors="replace")
+        
+        return SafePtyProcessUnicode
 
     def run(self) -> None:
         """Spawn the shell and forward PTY output until the session ends.
@@ -121,15 +134,6 @@ class _PtySession(QThread):
                 "env": self._environment,
                 "dimensions": (self._rows, self._columns),
             }
-
-            if sys.platform != "win32":
-                # PtyProcessUnicode accepts decoder options through spawn().
-                # Replacing malformed input prevents one bad byte from
-                # terminating the entire reader thread.
-                spawn_options.update(
-                    encoding="utf-8",
-                    codec_errors="replace",
-                )
 
             # This creates a PTY/ConPTY, not ordinary stdin/stdout pipes.
             process = process_type.spawn(self._argv, **spawn_options)
@@ -369,7 +373,7 @@ class TerminalView(QPlainTextEdit):
                 or (control and shift and key == Qt.Key_V)
                 or (shift and key == Qt.Key_Insert)
         ):
-            self._paste_clipboard()
+            self.copy_or_interrupt()
             return
 
         # Shift+PageUp/PageDown scrolls local history. Without Shift, the key
@@ -427,17 +431,24 @@ class TerminalView(QPlainTextEdit):
                 text = "\x1b" + text
             self._writer(text)
 
-    def _paste_clipboard(self) -> None:
-        """Send clipboard text to the shell using terminal newlines.
-
-        Qt clipboard text may contain LF or CRLF line endings. A terminal Enter
-        key is represented by carriage return, so pasted line endings are
-        normalized before the text is sent.
+    def copy_or_interrupt(self) -> None:
         """
+        Copy selected output or send Ctrl+C to the foreground process.
+        
+        MainWindow owns an application-wide Copy action. Routing that action here preserves 
+        terminal behavior even when Qt activates the menu shortcut before 'keyPressEvent()' receives Ctrl+C.
+        """
+        if self.textCursor().hasSelection():
+            self.copy()
+        else:
+            self._writer("\x03")
+            
+    def paste_clipboard(self) -> None:
+        """Send clipboard text to the shell using terminal newlines."""
         text = QApplication.clipboard().text()
         if not text:
             return
-
+        
         # Replace CRLF first so its LF is not converted a second time.
         terminal_text = text.replace("\r\n", "\r").replace("\n", "\r")
         self._writer(terminal_text)
@@ -486,13 +497,17 @@ class TerminalWidget(QWidget):
     _MIN_ROWS = 4
     _SCROLLBACK_LINES = 5000
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, working__directory: Path | None = None) -> None:
         """Build the terminal and start the preferred available shell.
 
         Args:
-            parent: Qt owner, normally MarkdownEditor’s MainWindow.
+            parent: Qt owner, normally MarkdownEditor's MainWindow.
+            working__directory: Existing project directory passed to the shell.'
+                When ommited, use the applications' current working directory.
         """
         super().__init__(parent)
+        
+        self._working_directory = self._resolve_working_directory(working__directory or Path.cwd())
 
         # Each entry is (display name, executable path, argument list).
         self._shells: list[tuple[str, str, list[str]]] = []
@@ -635,6 +650,44 @@ class TerminalWidget(QWidget):
         # Keep the private worker implementation inside TerminalWidget. Callers
         # receive one stable Boolean instead of depending on QThread details.
         return session is not None and session.isRunning()
+    
+    @staticmethod
+    def _resolve_working_directory(directory: Path) -> Path:
+        """
+        Return an absolute existing directory suitable for PTY launch.
+        
+        Args:
+            directory: Candidate project or workspace directory.
+            
+        Raises:
+            NotADirectoryError: If the candidate is not an existing directory.
+        """
+        
+        resolved = Path(directory).expanduser().resolve()
+        if not resolved.is_dir():
+            raise NotADirectoryError(f"Terminal directory does not exist: {resolved}")
+        return resolved
+    
+    def set_working_directory(self, directory: Path, restart: bool = True) -> None:
+        """
+        Retarget future shells to ''directory'' and optionally restart.
+        
+        Args:
+            directory: Existing directory that should become the shell's cwd.
+            restart: Restart the selected shell immediately when True.
+        
+        An existing process cannot have its cwd changed externally. Restarting creates
+        a new PTY with the new cwd without shell-specific ''cd'' syntax.
+        """
+        resolved = self._resolve_working_directory(directory)
+        if resolved == self._working_directory:
+            return
+        
+        self._working_directory = resolved
+        if restart and self._shells:
+            self._restart_shell()
+    
+    
 
     def _connect_signals(self) -> None:
         """Connect controls that exist for the widget's entire lifetime."""
@@ -769,7 +822,7 @@ class TerminalWidget(QWidget):
         environment.setdefault("TERM", "xterm-256color")
         environment.setdefault("COLORTERM", "truecolor")
 
-        session = _PtySession([shell_path, *arguments], Path.home(), environment, self._rows, self._columns, self)
+        session = _PtySession([shell_path, *arguments], self._working_directory, environment, self._rows, self._columns, self)
 
         # These connections are queued across the worker/GUI thread boundary.
         session.output_received.connect(self._feed_text)
@@ -820,6 +873,26 @@ class TerminalWidget(QWidget):
         return "".join(
             line[column].data for column in range(columns)
         ).rstrip()
+        
+    @staticmethod
+    def _visible_line_text(line: str, row: int, cursor_row: int, cursor_column: int) -> str:
+        """
+        Trim unused cells while retaining typed spaces before the cursor.
+        
+        Args:
+            line: One fixed=width row produced by 'pyte'.
+            row: Row number of 'line' in the active terminnal screen.
+            cursor_row: Current terminal cursor row.
+            cursor_column: Current terminal cursor column in character cells.
+            
+        Returns:
+            A compact display row. On the activ row, cells through the cursor are reatined
+            so a newly typed trailing space visibly moves the Qt caret.
+        """
+        content_end = len(line.rstrip())
+        if row == cursor_row:
+            content_end = max(content_end, min(cursor_column, len(line)))
+        return line[:content_end]
 
     def _render_screen(self, force_bottom: bool = False) -> None:
         """Render terminal history and the active screen into the protected view.
@@ -843,7 +916,7 @@ class TerminalWidget(QWidget):
         ]
 
         # screen.display already reflects ANSI cursor movement and erasure.
-        visible = [line.rstrip() for line in self._screen.display]
+        visible = [self._visible_line_text(line, row, self._screen.cursor.y, self._screen.cursor.x) for row, line in enumerate(self._screen.display)]
         self.output.setPlainText("\n".join([*history, *visible]))
 
         if at_bottom:

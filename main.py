@@ -272,7 +272,7 @@ class MainWindow(QMainWindow):
 
         self._git_refresh_timer = QTimer(self)
         self._git_refresh_timer.setInterval(15000)
-        self._git_refresh_timer.timeout.connect(self.file_manager.check_git_status)
+        self._git_refresh_timer.timeout.connect(self._refresh_git_state)
         self._git_refresh_timer.start()
 
         # Find/Replace bar. Hidden by default
@@ -374,6 +374,9 @@ class MainWindow(QMainWindow):
 
         self.git_service.snapshotReady.connect(self._on_git_snapshot)
         self.git_service.failed.connect(self._on_git_failure)
+        # GitService is created after the body and menus, so startup refresh belongs
+        # here, after all widgets and signals connections exists.
+        self._refresh_git_state()
 
     def _on_git_snapshot(self, snapshot) -> None:
         """Update branch identity and graph from the same Git snapshot."""
@@ -386,8 +389,26 @@ class MainWindow(QMainWindow):
         """Clear stale repository identity without interrupting editing."""
         self.git_branch_label.setText("No Git repository")
         self.git_branch_label.setToolTip(message)
-        self.git_branch_label.clear()
+        
+        # Do not call git_branch_label.clear(); that erases the message just set.
+        self.git_graph.clear()
 
+    def _refresh_git_state(self) -> None:
+        """
+        Refresh file colors and history for the current project root.
+        
+        The file-tree status checker and history service are seperate asynchronous
+        components. One coordinator prevents manus, timers, and folder changes
+        from refreshing only half of the Git UI.
+        """
+        file_manager = getattr(self, "file_manager", None)
+        if file_manager is None:
+            return
+        
+        file_manager.check_git_status()
+        if hasattr(self, "git_service"):
+            self._refresh_git_history()
+            
     def _refresh_git_history(self) -> None:
         """Request history for the current FileManager root, if one is open."""
         folder = self.file_manager.current_folder
@@ -585,9 +606,11 @@ class MainWindow(QMainWindow):
 
         dock.hide()
         self.console_dock = dock
-
+        
+        terminal_directory = (self._workspace_root if hasattr(sys, "_MEIPASS") else self.file_manager.current_folder or self._workspace_root)
+        
         # Terminal (new)
-        self.terminal = TerminalWidget(self)
+        self.terminal = TerminalWidget(parent=self, working__directory=terminal_directory)
         terminal_dock = QDockWidget("Terminal", self)
         terminal_dock.setWidget(self.terminal)
         terminal_dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
@@ -938,15 +961,12 @@ class MainWindow(QMainWindow):
         git_refresh_action = view_menu.addAction("Refresh Git Status")
         git_refresh_action.setShortcut("Ctrl+Shift+G")
         git_refresh_action.setShortcutContext(Qt.ApplicationShortcut)
-        # BUGFIX: was "connect(self.file_manager.check_git_status)" — a
-        # direct bound-method reference resolves self.file_manager RIGHT
-        # HERE, but set_up_menu() runs BEFORE set_up_body() creates the
-        # FileManager (line order in init_ui), so the attribute does not
-        # exist yet -> AttributeError at startup. The lambda defers the
-        # lookup to trigger time — the menu can only fire after the
-        # window is shown, long after file_manager exists (same
-        # launch-order rule as the cat / power-mode handlers).
-        git_refresh_action.triggered.connect(lambda: self.file_manager.check_git_status())
+        git_refresh_action.triggered.connect(self._refresh_git_state)
+        
+        toggle_git_history_action = view_menu.addAction("Toggle Git History")
+        toggle_git_history_action.setShortcut("Ctrl+Alt+G")
+        toggle_git_history_action.setShortcutContext(Qt.ApplicationShortcut)
+        toggle_git_history_action.triggered.connect(self._toggle_git_history)
 
         settings_action = view_menu.addAction("Settings")
         settings_action.setShortcut("Ctrl+Alt+S")
@@ -1012,11 +1032,15 @@ class MainWindow(QMainWindow):
 
     def _toggle_terminal(self):
         """Show or hide the terminal dock"""
-        if not self.terminal_dock.isVisible():
-            self.terminal_dock.show()
-        else:
+        if self.terminal_dock.isVisible():
             self.terminal_dock.hide()
-
+        else:
+            self.terminal_dock.show()
+    
+    def _toggle_git_history(self) -> None:
+        """Show or hide Git history dock created during startup."""
+        self.git_graph_dock.setVisible(not self.git_graph_dock.isVisible())
+    
     def _trigger_goto_definition(self):
         editor = self.current_editor()
         if isinstance(editor, PythonEditor):
@@ -2329,6 +2353,8 @@ class MainWindow(QMainWindow):
         self.file_manager.model.setRootPath(str(selected))
         self.file_manager.setRootIndex(self.file_manager.model.index(str(selected)))
         self.file_manager.check_git_status()
+        self.terminal.set_working_directory(selevted, restart=True)
+        self._refresh_git_state()
 
         new_workspace = self._discover_workspace_root(selected)
         if new_workspace != self._workspace_root:
@@ -2579,8 +2605,19 @@ class MainWindow(QMainWindow):
         self._add_to_recent_files(str(path))
         self.statusBar().showMessage(f"Saved {path.name}", 2_000)
         return True
+    
+    def _terminal_view_has_focus(self) -> bool:
+        """Return whether global Edit shortcuts belonng to the terminal view."""
+        terminal = getattr(self, "terminal", None)
+        output = getattr(terminal, "output", None)
+        return output is not None and output.hasFocus()
 
-    def copy(self):
+    def copy(self) -> None:
+        """Copy editor text or preserve Ctrl+C semantics in the terminal."""
+        if self._terminal_view_has_focus():
+            self.terminal.output.copy_or_interrupt()
+            return
+
         editor = self.current_editor()
         if editor is not None:
             editor.copy()
@@ -2600,7 +2637,12 @@ class MainWindow(QMainWindow):
         if editor is not None:
             editor.cut()
 
-    def paste(self):
+    def paste(self) -> None:
+        """Paste into the focused editor or forward clipboard text to the PTY."""
+        if self._terminal_view_has_focus():
+            self.terminal.output.paste_clipboard()
+            return
+
         editor = self.current_editor()
         if editor is not None:
             editor.paste()
@@ -3010,6 +3052,8 @@ class MainWindow(QMainWindow):
         runner = getattr(self, "python_runner", None)
         ruff = getattr(self, "ruff_lsp_client", None)
         terminal = getattr(self, "terminal", None)
+        git_service = getattr(self, "git_service", None)
+        
 
         return bool(
             # Retired editors remain here until their workers are disposed.
@@ -3018,6 +3062,7 @@ class MainWindow(QMainWindow):
             # QThread-based background services use isRunning().
             or (git_worker is not None and git_worker.isRunning())
             or (search_worker is not None and search_worker.isRunning())
+            or (git_service is not None and git_service.is_running())
 
             # PythonRunner exposes its own public running-state method.
             or (runner is not None and runner.is_running())
@@ -3083,6 +3128,9 @@ class MainWindow(QMainWindow):
             self.search_worker.shutdown()
         self.file_manager.git_checker.shutdown()
         self.settings.setValue("recent_files", self.recent_files)
+        
+        self.file_manager.git_checker.shutdown()
+        self.git_service.shutdown()
 
         if self._background_work_running():
             event.ignore()

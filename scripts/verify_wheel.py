@@ -17,6 +17,13 @@ REQUIRED_ASSETS = {
     "markdowneditor_assets/icons/close-icon.svg",
     "markdowneditor_assets/themes/theme.json",
 }
+REQUIRED_RUNTIME_MODULES = {
+    "git_implementation/git_service.py",
+    "git_implementation/history.py",
+    "git_ui/commit_graph.py",
+    "markdown_editor/markdowncustomlexer.py",
+    "markdown_editor/markdowneditor.py",
+}
 
 
 def verify_wheel(wheel: Path) -> None:
@@ -26,7 +33,14 @@ def verify_wheel(wheel: Path) -> None:
         missing = sorted(REQUIRED_ASSETS - names)
         if missing:
             raise SystemExit("Wheel is missing assets:\n" + "\n".join(missing))
-
+        
+        missing_modules = sorted(REQUIRED_RUNTIME_MODULES - names)
+        if missing_modules:
+            raise SystemExit(
+                "Wheel is missing runtime modules:\n"
+                + "\n".join(missing_modules)
+            )
+        
         # A representative sprite proves nested package-data globs worked.
         if not any(
             PurePosixPath(name).parts[:3]

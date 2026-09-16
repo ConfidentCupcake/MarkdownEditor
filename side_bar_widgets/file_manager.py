@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-from PyQt5.QtCore import QDir, QModelIndex, QPoint, Qt, QDir, QItemSelectionModel
+from PyQt5.QtCore import QDir, QModelIndex, QPoint, Qt, QItemSelectionModel
 from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QIcon
 from PyQt5.QtWidgets import (
     QAbstractItemView,
