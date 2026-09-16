@@ -84,7 +84,7 @@ class _PtySession(QThread):
         if sys.platform == "win32":
             try:
                 # pywinpty wraps Windows ConPTY and the older winpty fallback.
-                from winpty import PytProcess
+                from winpty import PtyProcess
             except ImportError as error:
                 raise RuntimeError(
                         "Windows terminal support requiress pywinpty. "
@@ -101,94 +101,100 @@ class _PtySession(QThread):
                     "Run: python -m pip install -e ."
                 ) from error
         return PtyProcessUnicode
-    
+
     def run(self) -> None:
-        """"
-        Spawn the sehll and forward its PTY output until the session ends.
-        
-        This method is executed by QThread, not by the GUI thread.
-        It converts backend-specific output to Unicode and emits it through 'output_recieved'.
-        All failures are converted to 'session_failed'.
+        """Spawn the shell and forward PTY output until the session ends.
+
+        The method executes on the QThread rather than Qt's GUI thread. It
+        creates the platform backend, emits decoded output, and guarantees that
+        the process is closed and `session_exited` is emitted on every path.
         """
         process: Any | None = None
         exit_code = -1
-        
+
         try:
             process_type = self._process_type()
-            
-            # Both backends accept cwd, env, and dimensions(rows, columns).
+
+            # Both PTY backends accept the same core launch options.
             spawn_options: dict[str, Any] = {
                 "cwd": str(self._cwd),
                 "env": self._environment,
                 "dimensions": (self._rows, self._columns),
             }
-            
+
             if sys.platform != "win32":
                 # PtyProcessUnicode accepts decoder options through spawn().
-                # "replace" prevents one invalid byte from killing the reader.
+                # Replacing malformed input prevents one bad byte from
+                # terminating the entire reader thread.
                 spawn_options.update(
                     encoding="utf-8",
                     codec_errors="replace",
                 )
-                
-            # spawn() creates a real PTY/ConPTY, unlike QProcess pipes.
+
+            # This creates a PTY/ConPTY, not ordinary stdin/stdout pipes.
             process = process_type.spawn(self._argv, **spawn_options)
-            
+
             with self._lock:
+                # Publish the process only after spawn() succeeds. GUI writes,
+                # resizes, and stop requests can now use it safely.
                 self._process = process
-            
-            # stop() might have been called while spawn() was still working.
-            if self._stop_requested.it_set():
+
+            # stop() may have been requested while spawn() was still running.
+            # Event's real query method is is_set(), not it_set().
+            if self._stop_requested.is_set():
                 self._close_process(process)
                 return
-            
+
             self.session_started.emit()
-            
+
             while not self._stop_requested.is_set() and process.isalive():
                 try:
-                    # A large read size reduces signals overhead durig commands
-                    # that produce a lot of terminal output.
+                    # A larger buffer reduces signal overhead during commands
+                    # that generate substantial terminal output.
                     chunk = process.read(65536)
                 except EOFError:
-                    # EOF is the normal indication that the PTY was closed.
+                    # EOF is normal when the shell or terminal closes.
                     break
                 except OSError as error:
                     if self._stop_requested.is_set():
                         # request_stop() closes the PTY to unblock read().
                         break
-                    raise RuntimeError(f"Could not read from terminal: {error}") from error
-                
+                    raise RuntimeError(
+                        f"Could not read from terminal: {error}"
+                    ) from error
+
                 if not chunk:
                     continue
-                
-                # pywinpty normally returns str, but decoding bytes here makes
-                # the boundary explicit and protects against backend variance.
+
+                # pywinpty normally returns str. This branch keeps the worker
+                # safe if a backend version returns bytes instead.
                 if isinstance(chunk, bytes):
                     chunk = chunk.decode("utf-8", errors="replace")
-                    
+
+                # Qt delivers this signal to TerminalWidget on the GUI thread.
                 self.output_received.emit(chunk)
-                
+
             status = getattr(process, "exitstatus", None)
             if status is not None:
                 exit_code = int(status)
-                
             elif self._stop_requested.is_set():
-                # A user-requested shutdown is not reported as a process error.
+                # User-requested shutdown is successful even when the backend
+                # does not provide a child exit code.
                 exit_code = 0
-                
+
         except Exception as error:
-            # Exceptions raised in QThread.run() cannot be caught by the GUI.
+            # Exceptions cannot propagate from QThread.run() to MainWindow.
             if not self._stop_requested.is_set():
                 self.session_failed.emit(str(error))
-                
+
         finally:
-            # The finally block runs after success, EOF, and early stop.
+            # Always close process resources and complete the lifecycle signal.
             if process is not None:
                 self._close_process(process)
-            
+
             with self._lock:
                 self._process = None
-            
+
             self.session_exited.emit(exit_code)
             
     @staticmethod
@@ -526,11 +532,14 @@ class TerminalWidget(QWidget):
             app.aboutToQuit.connect(self._shutdown_and_wait)
 
     def _init_ui(self) -> None:
+        """Create a toolbar above a terminal view that fills this widget.
+
+        Passing `self` to QVBoxLayout installs the layout on TerminalWidget.
+        The output view then receives all remaining dock space instead of
+        retaining only its small size hint.
         """
-        Create the toolbar and the single protected terminal surface.
-        :return:
-        """
-        layout = QVBoxLayout()
+        # Supplying self is the functional fix for the narrow terminal.
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -539,21 +548,32 @@ class TerminalWidget(QWidget):
         toolbar.setSpacing(6)
 
         self.status_label = QLabel("● Terminal ready")
-        self.status_label.setStyleSheet("color:#98c379; font-size:12px;")
+        self.status_label.setStyleSheet(
+            "color:#98c379; font-size:12px;"
+        )
 
         self.shell_combo = QComboBox()
         self.shell_combo.setToolTip("Select which shell to use")
         self.shell_combo.setStyleSheet(
             """
             QComboBox {
-                background-color:#2c313a; color:#dcdfe4;
-                border:1px solid #3d324d; border-radius:3px;
-                padding:3px 8px; min-width:100px;
+                background-color:#2c313a;
+                color:#dcdfe4;
+                border:1px solid #3d324d;
+                border-radius:3px;
+                padding:3px 8px;
+                min-width:100px;
             }
-            QComboBox:hover { border:1px solid #4b5263; }
-            QComboBox::drop-down { border:none; width:20px; }
+            QComboBox:hover {
+                border:1px solid #4b5263;
+            }
+            QComboBox::drop-down {
+                border:none;
+                width:20px;
+            }
             QComboBox QAbstractItemView {
-                background-color:#2c313a; color:#dcdfe4;
+                background-color:#2c313a;
+                color:#dcdfe4;
                 selection-background-color:#3d424d;
                 border:1px solid #3d424d;
             }
@@ -561,28 +581,60 @@ class TerminalWidget(QWidget):
         )
 
         self.restart_btn = QPushButton("Restart")
-        self.restart_btn.setToolTip("Restart using the selected shell")
+        self.restart_btn.setToolTip(
+            "Restart using the selected shell"
+        )
 
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.setToolTip("Clear terminal output")
 
         toolbar.addWidget(self.status_label)
         toolbar.addWidget(self.shell_combo)
+
+        # The stretch consumes middle space and keeps action buttons aligned
+        # to the right edge of the dock.
         toolbar.addStretch()
         toolbar.addWidget(self.restart_btn)
         toolbar.addWidget(self.clear_btn)
         layout.addLayout(toolbar)
 
-        # There is deliberately no QLineEdit. The shell draws and edits its
-        # command after its own prompt inside this protected surface.
+        # There is deliberately no QLineEdit. TerminalView is protected from
+        # editing, while keyPressEvent forwards input to PowerShell's cursor.
         self.output = TerminalView(self._write_to_shell, self)
         self.output.setFont(QFont("Consolas", 12))
         self.output.setStyleSheet(
-            "QPlainTextEdit { background:#1e2127; color:#abb2bf; border:none; padding:4px; "
-            "selection-background-color:#3e4451; }"
+            "QPlainTextEdit {"
+            "background:#1e2127;"
+            "color:#abb2bf;"
+            "border:none;"
+            "padding:4px;"
+            "selection-background-color:#3e4451;"
+            "}"
         )
-        self.output.setToolTip("Up/Down: command history. Ctrl+Shift+C/V: copy/paste")
-        layout.addWidget(self.output)
+        self.output.setToolTip(
+            "Up/Down: command history. "
+            "Ctrl+Shift+C/V: copy/paste."
+        )
+
+        # With the layout installed on self, this widget expands in both
+        # directions to occupy the dock's remaining area.
+        layout.addWidget(self.output, stretch=1)
+
+    def is_running(self) -> bool:
+        """Return whether this widget still owns a running PTY worker.
+
+        Returns:
+            True while the active _PtySession QThread is running. False when no
+            session exists or its worker has completed.
+
+        MainWindow uses this method while asynchronously waiting for background
+        services to stop during application shutdown.
+        """
+        session = self._session
+
+        # Keep the private worker implementation inside TerminalWidget. Callers
+        # receive one stable Boolean instead of depending on QThread details.
+        return session is not None and session.isRunning()
 
     def _connect_signals(self) -> None:
         """Connect controls that exist for the widget's entire lifetime."""

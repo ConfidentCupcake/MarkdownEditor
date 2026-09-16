@@ -434,6 +434,15 @@ class FileManager(QTreeView):
 
         event.setDropAction(Qt.CopyAction if copy_requested else Qt.MoveAction)
         event.accept()
+
+    @property
+    def current_folder(self) -> Path | None:
+        """Return the current project-tree root as a resolved directory."""
+        raw_path = self.model.rootPath()
+        if not raw_path:
+            return None
+        path = Path(raw_path).resolve()
+        return path if path.is_dir() else None
         
         
 class GitAwareFileSystemModel(QFileSystemModel):

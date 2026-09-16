@@ -35,6 +35,8 @@ from ruff_implementation.ruff_lsp_client import RuffLspClient
 from side_bar_widgets.code_outline import CodeOutlineTree
 from side_bar_widgets.file_manager import FileManager
 from side_bar_widgets.fuzzy_searcher import SearchItem, SearchWorker
+from git_implementation.git_service import GitService
+from git_ui.commit_graph import CommitGraphPanel
 
 from markdown_python_editor import __version__
 from markdowneditor_assets import asset_path
@@ -359,6 +361,38 @@ class MainWindow(QMainWindow):
         self._cat_box_timer.timeout.connect(self._cat_moves_into_box)
 
         self._arm_cat_timers()
+
+        self.git_service = GitService(self)
+        self.git_branch_label = QLabel("No Git repository", self)
+        self.statusBar().addPermanentWidget(self.git_branch_label)
+
+        self.git_graph = CommitGraphPanel(self)
+        self.git_graph_dock = QDockWidget("Git History", self)
+        self.git_graph_dock.setWidget(self.git_graph)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.git_graph_dock)
+        self.git_graph_dock.hide()
+
+        self.git_service.snapshotReady.connect(self._on_git_snapshot)
+        self.git_service.failed.connect(self._on_git_failure)
+
+    def _on_git_snapshot(self, snapshot) -> None:
+        """Update branch identity and graph from the same Git snapshot."""
+        identity = snapshot.branch or f"detached@{snapshot.head_short}" if snapshot.head_short else "unborn"
+        self.git_branch_label.setText(f"Git: {identity}")
+        self.git_branch_label.setToolTip(str(snapshot.root))
+        self.git_graph.set_snapshot(snapshot)
+
+    def _on_git_failure(self, message: str) -> None:
+        """Clear stale repository identity without interrupting editing."""
+        self.git_branch_label.setText("No Git repository")
+        self.git_branch_label.setToolTip(message)
+        self.git_branch_label.clear()
+
+    def _refresh_git_history(self) -> None:
+        """Request history for the current FileManager root, if one is open."""
+        folder = self.file_manager.current_folder
+        if folder:
+            self.git_service.refresh(Path(folder))
 
     def _arm_cat_timers(self):
         """(Re)start every idle-escalation timer. Called at startup and on
@@ -2958,18 +2992,45 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Replaced {len(matches)} occurrences", 3_000)
 
     def _background_work_running(self) -> bool:
-        git_worker = getattr(getattr(self, "file_manager", None), "git_checker", None)
+        """Return whether an asynchronous component is still shutting down.
+
+        Returns:
+            True while an editor retirement, Git scan, project search, Python
+            run, Ruff process, or terminal PTY worker remains active.
+
+        The method is polled by `_finish_pending_close()` through QTimer. It
+        must only inspect state and must never block the GUI thread.
+        """
+        git_worker = getattr(
+            getattr(self, "file_manager", None),
+            "git_checker",
+            None,
+        )
         search_worker = getattr(self, "search_worker", None)
         runner = getattr(self, "python_runner", None)
         ruff = getattr(self, "ruff_lsp_client", None)
         terminal = getattr(self, "terminal", None)
+
         return bool(
+            # Retired editors remain here until their workers are disposed.
             self._retired_editors
+
+            # QThread-based background services use isRunning().
             or (git_worker is not None and git_worker.isRunning())
             or (search_worker is not None and search_worker.isRunning())
+
+            # PythonRunner exposes its own public running-state method.
             or (runner is not None and runner.is_running())
-            or (ruff is not None and ruff.process.state() != QProcess.NotRunning)
-            or (terminal is not None and terminal.process.state() != QProcess.NotRunning)
+
+            # Ruff still uses QProcess, so its existing state check remains.
+            or (
+                ruff is not None
+                and ruff.process.state() != QProcess.NotRunning
+            )
+
+            # The PTY terminal no longer owns a QProcess. Ask its public API
+            # whether the _PtySession worker is still running.
+            or (terminal is not None and terminal.is_running())
         )
 
     def _finish_pending_close(self):
