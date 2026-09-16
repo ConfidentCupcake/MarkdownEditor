@@ -368,8 +368,10 @@ class MainWindow(QMainWindow):
 
         self.git_graph = CommitGraphPanel(self)
         self.git_graph_dock = QDockWidget("Git History", self)
+        self.git_graph_dock.setObjectName("GitHistoryDock")
         self.git_graph_dock.setWidget(self.git_graph)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.git_graph_dock)
+        self._apply_git_history_theme(self._active_theme_path())
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.git_graph_dock)
         self.git_graph_dock.hide()
 
         self.git_service.snapshotReady.connect(self._on_git_snapshot)
@@ -380,10 +382,24 @@ class MainWindow(QMainWindow):
 
     def _on_git_snapshot(self, snapshot) -> None:
         """Update branch identity and graph from the same Git snapshot."""
-        identity = snapshot.branch or f"detached@{snapshot.head_short}" if snapshot.head_short else "unborn"
+        identity = snapshot.branch or (
+            f"detached@{snapshot.head_short}" if snapshot.head_short else "unborn"
+        )
         self.git_branch_label.setText(f"Git: {identity}")
         self.git_branch_label.setToolTip(str(snapshot.root))
         self.git_graph.set_snapshot(snapshot)
+
+    def _apply_git_history_theme(self, theme_path) -> None:
+        """Theme the history content, dock title, and current-branch indicator."""
+        self.git_graph.apply_theme(theme_path)
+        foreground = self.git_graph.palette().color(QPalette.Text).name()
+        background = self.git_graph.background
+        accent = self.git_graph.lane_color(0).name()
+        self.git_graph_dock.setStyleSheet(
+            f"QDockWidget#GitHistoryDock {{ color:{foreground}; }}"
+            f"QDockWidget#GitHistoryDock::title {{ background:{background}; padding:6px; }}"
+        )
+        self.git_branch_label.setStyleSheet(f"color:{accent}; padding:0 8px; font-weight:600;")
 
     def _on_git_failure(self, message: str) -> None:
         """Clear stale repository identity without interrupting editing."""
@@ -610,7 +626,7 @@ class MainWindow(QMainWindow):
         terminal_directory = (self._workspace_root if hasattr(sys, "_MEIPASS") else self.file_manager.current_folder or self._workspace_root)
         
         # Terminal (new)
-        self.terminal = TerminalWidget(parent=self, working__directory=terminal_directory)
+        self.terminal = TerminalWidget(parent=self, working_directory=terminal_directory)
         terminal_dock = QDockWidget("Terminal", self)
         terminal_dock.setWidget(self.terminal)
         terminal_dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
@@ -1032,10 +1048,7 @@ class MainWindow(QMainWindow):
 
     def _toggle_terminal(self):
         """Show or hide the terminal dock"""
-        if self.terminal_dock.isVisible():
-            self.terminal_dock.hide()
-        else:
-            self.terminal_dock.show()
+        self.terminal_dock.setVisible(not self.terminal_dock.isVisible())
     
     def _toggle_git_history(self) -> None:
         """Show or hide Git history dock created during startup."""
@@ -1485,6 +1498,10 @@ class MainWindow(QMainWindow):
         can inherit them via _apply_editor_settings().
         """
         self._current_settings = settings
+
+        # The dock is created after startup settings; later changes retheme it.
+        if hasattr(self, "git_graph"):
+            self._apply_git_history_theme(self._theme_path(settings.get("theme")))
 
         for editor in self.tab_view.all_editors():
             self._apply_editor_settings(editor, settings)
@@ -1944,6 +1961,8 @@ class MainWindow(QMainWindow):
         self.search_list_view.itemClicked.connect(self.search_list_view_clicked)
 
         search_layout.addWidget(self.search_checkbox)
+        search_layout.addWidget(self.search_regex_checkbox)
+        search_layout.addWidget(self.search_case_checkbox)
         search_layout.addWidget(search_input)
         search_layout.addSpacerItem(QSpacerItem(5, 5, QSizePolicy.Minimum, QSizePolicy.Minimum))
 
@@ -2352,8 +2371,7 @@ class MainWindow(QMainWindow):
         selected = Path(new_folder).resolve()
         self.file_manager.model.setRootPath(str(selected))
         self.file_manager.setRootIndex(self.file_manager.model.index(str(selected)))
-        self.file_manager.check_git_status()
-        self.terminal.set_working_directory(selevted, restart=True)
+        self.terminal.set_working_directory(selected, restart=True)
         self._refresh_git_state()
 
         new_workspace = self._discover_workspace_root(selected)
@@ -3126,7 +3144,6 @@ class MainWindow(QMainWindow):
         self.ruff_lsp_client.shutdown()
         if hasattr(self.search_worker, "shutdown"):
             self.search_worker.shutdown()
-        self.file_manager.git_checker.shutdown()
         self.settings.setValue("recent_files", self.recent_files)
         
         self.file_manager.git_checker.shutdown()
@@ -3366,4 +3383,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

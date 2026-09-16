@@ -373,7 +373,7 @@ class TerminalView(QPlainTextEdit):
                 or (control and shift and key == Qt.Key_V)
                 or (shift and key == Qt.Key_Insert)
         ):
-            self.copy_or_interrupt()
+            self.paste_clipboard()
             return
 
         # Shift+PageUp/PageDown scrolls local history. Without Shift, the key
@@ -473,7 +473,7 @@ class TerminalView(QPlainTextEdit):
 
         paste_action = QAction("Paste", menu)
         paste_action.setShortcut(QKeySequence.Paste)
-        paste_action.triggered.connect(self._paste_clipboard)
+        paste_action.triggered.connect(self.paste_clipboard)
         menu.addAction(paste_action)
 
         menu.addSeparator()
@@ -497,17 +497,17 @@ class TerminalWidget(QWidget):
     _MIN_ROWS = 4
     _SCROLLBACK_LINES = 5000
 
-    def __init__(self, parent: QWidget | None = None, working__directory: Path | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, working_directory: Path | None = None) -> None:
         """Build the terminal and start the preferred available shell.
 
         Args:
             parent: Qt owner, normally MarkdownEditor's MainWindow.
-            working__directory: Existing project directory passed to the shell.'
+            working_directory: Existing project directory passed to the shell.
                 When ommited, use the applications' current working directory.
         """
         super().__init__(parent)
         
-        self._working_directory = self._resolve_working_directory(working__directory or Path.cwd())
+        self._working_directory = self._resolve_working_directory(working_directory or Path.cwd())
 
         # Each entry is (display name, executable path, argument list).
         self._shells: list[tuple[str, str, list[str]]] = []

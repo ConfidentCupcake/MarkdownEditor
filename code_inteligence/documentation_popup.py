@@ -163,9 +163,3 @@ class DocumentationPopup(QFrame):
         self.title_label.setFont(popup_font)
         self.body_edit.setFont(popup_font)
         
-        
-        
-        
-        
-        
-    
