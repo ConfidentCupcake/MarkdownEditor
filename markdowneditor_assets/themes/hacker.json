@@ -10,7 +10,7 @@
             "font-weight": "normal",
             "italic": false
           },
-          "paper-color": "#02240b"
+          "paper-color": "#171717"
         }
       },
       {
@@ -568,11 +568,11 @@
         "family": "JetBrains Mono",
         "font-size": 13
       },
-      "paper-color": "#02240b",
+      "paper-color": "#171717",
       "caret-color": "#f31122",
       "caret-line-background": "#3d424d",
       "margin-foreground": "#ff888888",
-      "margin-background": "#02240b"
+      "margin-background": "#171717"
     }
   }
 }

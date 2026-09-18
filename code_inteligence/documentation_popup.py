@@ -1,6 +1,6 @@
-from PyQt5.QtCore import Qt, QPoint
+from PyQt5.QtCore import Qt, QPoint, QEvent, pyqtSignal
 from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import QFrame, QLabel, QPlainTextEdit, QVBoxLayout, QToolTip
+from PyQt5.QtWidgets import QApplication, QFrame, QLabel, QPlainTextEdit, QVBoxLayout
 
 class DocumentationPopup(QFrame):
     """A small scrollable window for displaying Jedi documentation."""
@@ -13,16 +13,23 @@ class DocumentationPopup(QFrame):
     MIN_HEIGHT = 140
     MAX_HEIGHT = 360
     
+    dismissed = pyqtSignal()
+    
     def __init__(self, parent=None):
-        # Qt.QToolTip makes this a temporary tooltip-style window.
-        # Qt.FramelessWindowHint removes a normal OS title bar/frame
-        # Qt.WindowStaysOnTopHint keeps the popup above the editor.
+        """Create a persistent documentation window with a draggable heading."""
+        # Tool windows do not use Qt's automatic tooltip timeout/dismissal.
         super().__init__(
             parent,
-            Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint,
+            Qt.ToolTip | Qt.FramelessWindowHint,
         )
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self._drag_origin = None
+        self._drag_moved = False
+        # Observe clicks throughout this application, including other docks.
+        # Qt removes this filter automatically when the popup is destroyed.
+        QApplication.instance().installEventFilter(self)
         # The object name is used by the stylesheet selector:
-        # QFrame#DocumentationPopup ( ... )
+        # QFrame#DocumentationPopup (...)
         self.setObjectName("DocumentationPopup")
         
         # The popup must never take keyboard focus away from QScintilla.
@@ -42,6 +49,8 @@ class DocumentationPopup(QFrame):
         # The first line of Jedi output is used as a short heading,
         # for example: "Path" or "len (function)".
         self.title_label = QLabel(self)
+        self.title_label.setCursor(Qt.SizeAllCursor)
+        self.title_label.setToolTip("Drag to move, left-click to dismiss")
         
         # Display angle brackets, ampersands and similar characters
         # literally instead of allowing QLabel to interpret them as HTML.
@@ -152,7 +161,45 @@ class DocumentationPopup(QFrame):
         
         self.show()
         self.raise_()
-    
+        
+    def dismiss(self):
+        """Hide the window and cancel any documentation result still pending."""
+        self.hide()
+        self.dismissed.emit()
+        
+    def eventFilter(self, watched, event):
+        """
+        Dismiss on left-click; reserve a heading drag for moving the window.
+        
+        A heading press is resolved on release: a click dismisses, a drag mooves.
+        Other left presses dismiss immediately without consuming the click, so 
+        editor positioning and toolbar actions still work normally.
+        """
+        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            if self.isVisible() and watched is self.title_label:
+                self._drag_origin = event.globalPos()
+                self._window_origin = self.pos()
+                self._drag_moved = False
+                return True
+            # Emit even while hidden: a left click must cancel a slow Jedi lookup.
+            self.dismiss()
+        
+        elif event.type() == QEvent.MouseMove and self._drag_origin is not None:
+            delta = event.globalPos() - self._drag_origin
+            if delta.manhattanLength() >= QApplication.startDragDistance():
+                self._drag_moved = True
+            if self._drag_moved:
+                self.move(self._window_origin + delta)
+            return True
+        elif event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+            if self._drag_origin is not None:
+                self._drag_origin = None
+                if not self._drag_moved:
+                    self.dismiss()
+                return True
+        return super().eventFilter(watched, event)
+        
+
     def set_documentation_font(self, font: QFont):
         """Use a smaller copy of the editor font in the documentation popup."""
         popup_font = QFont(font)

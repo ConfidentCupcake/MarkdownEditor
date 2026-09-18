@@ -98,7 +98,12 @@ class PythonEditor(QsciScintilla):
             self._ruff_hover_timer.setSingleShot(True)
             self._ruff_hover_timer.setInterval(150)
             self._ruff_hover_timer.timeout.connect(self._trigger_ruff_hover)
-
+            
+            # An owned timer can be stopped when Space/Enter dismisses help.
+            self._signature_timer = QTimer(self)
+            self._signature_timer.setSingleShot(True)
+            self._signature_timer.setInterval(50)
+            self._signature_timer.timeout.connect(self._trigger_signature_help)
             self.signature_helper = SignatureHelper()
             self.signature_helper.signature_ready.connect(self._on_signature_ready)
             self.signature_helper.signature_empty.connect(self._on_signature_empty)
@@ -117,15 +122,13 @@ class PythonEditor(QsciScintilla):
             self.py_lexer = PyCustomLexer(self)
 
             self.documentation_popup = DocumentationPopup(self)
+            self.documentation_popup.dismissed.connect(self._cancel_documentation)
+            self._documentation_global_pos = None
             # Popup font follows the theme's global editor font (the old
             # self.window_font is gone — the lexer owns fonts now).
             self.documentation_popup.set_documentation_font(
                 self.py_lexer.editor_font())
 
-            self._hover_timer = QTimer(self)
-            self._hover_timer.setSingleShot(True)
-            self._hover_timer.setInterval(500)
-            self._hover_timer.timeout.connect(self._trigger_hover)
             self.setMouseTracking(True)
 
             self._apply_theme_editor_style()
@@ -204,49 +207,28 @@ class PythonEditor(QsciScintilla):
         if hasattr(self, "documentation_popup") and self.documentation_popup:
             self.documentation_popup.set_documentation_font(f)
 
-    def _trigger_hover(self):
-        """Called 500 ms after the mouse stopped moving. Run Jedi."""
-        if self._shutting_down:
-            return
-
-        pos = getattr(self, "_last_mouse_pos", None)
-        if pos is None:
-            return
-
-        # Get the byte position from mouse coordinates
-        # SCI_POSITIONFROMPOINT = 2022
-        byte_pos = self.SendScintilla(2022, pos.x(), pos.y())
+    def _cancel_documentation(self):
+        """Invalidate pending Jedi documentation after an explicit dismissal."""
+        self.hover_helper.invalidate()
+        self._documentation_global_pos = None
+        
+    def _documentation_target(self, pos):
+        """
+        Return Jedi's line/column only whenn click lands on a identifier.
+        
+        Scintilla positions count UTF-8 bytes; Jedi columns count Unicode characters.
+        Decode the prefix before calculating the character column.
+        """
+        byte_pos = self.SendScintilla(self.SCI_POSITIONFROMPOINTCLOSE, pos.x(), pos.y())
         if byte_pos < 0:
-            return
-
-        # Convert byte position to line/column manually
-        # (SendScintilla 2126 SCI_LINEFROMPOSITION returns 0 in some PyQt5 versions)
-        text = self.text()
-        if not text.strip():
-            return
-
-        text_bytes = text.encode("utf-8")
-        if byte_pos >= len(text_bytes):
-            byte_pos = len(text_bytes) - 1
-
-        text_before = text_bytes[:byte_pos].decode("utf-8", errors="ignore")
-
-        # Count newlines to het the line number (0-based)
-        line = text_before.count("\n")
-
-        # Find the column: distance from the last newline byte_pos
-        last_newline = text_before.rfind("\n")
-        if last_newline == -1:
-            column = len(text_before)
-        else:
-            column = len(text_before) - last_newline - 1
-
-        file_path = str(self.full_path) if self.full_path else None
-        # Jedi uses 1-based line numbers
-
-        if getattr(self, "_ruff_hover_active", False):
-            return
-        self.hover_helper.get_hover(line + 1, column, text, file_path)
+            return None
+        prefix = self.text().encode("utf-8")[:byte_pos].decode("utf-8", errors="ignore")
+        line = prefix.count("\n")
+        column = len(prefix.rsplit("\n", 1)[-1])
+        for match in re.finditer(r"[^\W\d]\w*", self.text(line), re.UNICODE):
+            if match.start() <= column < match.end():
+                return line + 1, column
+        return None
 
     def _trigger_ruff_hover(self):
         """Show Ruff diagnostic tooltip after 150ms of no mouse movement."""
@@ -261,62 +243,53 @@ class PythonEditor(QsciScintilla):
             # True means the current mouse location lies on a Ruff diagnostic line.
             self._ruff_hover_active = self.ruff_lsp.hover(pos)
             
-            # Do not leave general documentation covering syntax/lint message.
-            if self._ruff_hover_active and hasattr(self, "documentation_popup"):
-                self.documentation_popup.hide()
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:
-        """Debounce both Ruff and Jedi hover tooltips."""
+        """Update diagnostic hover without requesting or hiding documentation."""
         if not self.is_python_file or self._shutting_down:
-            return super().mouseMoveEvent(e)
-
-        self._last_mouse_pos = e.pos()
-        # Hide the old result immediately. Jedi runs asynchronously, so this prevents stale documentation
-        # from appearing to belong to a new symbol while a fresh Jedi request is waiting for the hover debounce timer.
-        if hasattr(self, "documentation_popup"):
-            self.documentation_popup.hide()  # The previous symbol's documentation must not remain visible after the user moved to a different editor location.
-        self.hover_helper.invalidate()
-
-        if hasattr(self, "_ruff_hover_timer"):
+            self._last_mouse_pos = e.pos()
             self._ruff_hover_timer.start()
-
-        self._hover_timer.start()
-        return super().mouseMoveEvent(e)
+        super().mouseMoveEvent(e)
 
     def contextMenuEvent(self, event):
-        """Let the Ruff controller handle a right-click on a Ruff diagnostic.
-        Otherwise, show QScintillia's normal enitor context menu."""
+        """
+        Request documentation for a right-clicked identifier.
+        
+        Blank space retains the existing diagnostic/editor context menu. 
+        A keyboard menu request also keeps the normal context menu behavior.
+        """
+        from PyQt5.QtGui import QContextMenuEvent
+        
+        if (self.is_python_file and not self._shutting_down and event.reason() == QContextMenuEvent.Mouse):
+            target = self._documentation_target(event.pos())
+            if target is not None:
+                self._ruff_hover_timer.stop()
+                self._dismiss_signature()
+                self._documentation_global_pos = event.globalPos()
+                line, column = target
+                self.hover_helper.get_hover(
+                    line, column, self.text(),
+                    str(self.full_path) if self.full_path else None,
+                )
+                event.accept()
+                return
+        
         if self.is_python_file and self.ruff_lsp is not None and self.ruff_lsp.context_menu(event):
             event.accept()
             return
         super().contextMenuEvent(event)
+        
 
     def _on_hover_ready(self, generation: int, info: str):
         """Show the tooltip with the docstring."""
-        if self._shutting_down or generation != self.hover_helper.generation or not info:
+        if self._shutting_down or generation != self.hover_helper.generation or self._documentation_global_pos is None:
             return
+        self.documentation_popup.show_documentation(self._documentation_global_pos, info or "Documentation\nNo documentation available")
 
-        # The popup only exists in Python Editor mode. hasattr() also makes this method safe
-        # during shutdown or unusual partial initialization.
-        if not hasattr(self, "documentation_popup"):
-            return
-
-        # _last_mouse_pos is set by mouseMoveEvent. If no mouse event has occurred,
-        # there is no meaningful screen position for this popup.
-        mouse_pos = getattr(self, "_last_mouse_pos", None)
-
-        if mouse_pos is None:
-            return
-
-        # mapToGlobal converts editor-local mouse coordinates into screen
-        # coordinates. Popup window use global/screen position for move()
-        global_pos = self.mapToGlobal(mouse_pos)
-        self.documentation_popup.show_documentation(global_pos, info)
 
     def _on_hover_empty(self, generation: int):
-        """Hide Jedi documenation when no symbol is under the mouse."""
-        if generation == self.hover_helper.generation and hasattr(self, "documentation_popup"):
-            self.documentation_popup.hide()
+        """Explain an empty result instead of leaving the previous symbol's docs."""
+        self._on_hover_ready(generation, "Documentation\nNo documentation available.")
 
     def goto_definition(self):
         """Trigger the definition search at the current cursor position."""
@@ -427,59 +400,77 @@ class PythonEditor(QsciScintilla):
         return not (previous.isalnum() or previous in "_.")
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Handle editor shortcuts, indentation, and signature scheduling."""
-        if event.key() == Qt.Key.Key_F12:
-            self.goto_definition()
-            return
+            """Handle editor shortcuts, indentation, and signature scheduling."""
+            # Do this before early returns for completion acceptance/indentation.
+            if self.is_python_file and event.key() in (
+                    Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape):
+                self._dismiss_signature()
 
-        if (
-                event.modifiers() == Qt.KeyboardModifier.ControlModifier
-                and event.key() == Qt.Key.Key_Space
-                and self.is_python_file
-        ):
-            line, column = self.getCursorPosition()
-            self._manual_completion_generation = self.auto_completer.get_completions(
-                line + 1,
-                column,
-                self.text(),
-            )
-            return
+            if event.key() == Qt.Key.Key_F12:
+                self.goto_definition()
+                return
 
-        if (
-                event.modifiers() == Qt.KeyboardModifier.ControlModifier
-                and event.key() == Qt.Key.Key_X
-                and not self.hasSelectedText()
-        ):
-            line, _column = self.getCursorPosition()
-            self.setSelection(line, 0, line, self.lineLength(line))
-            self.cut()
-            return
+            if (
+                    event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                    and event.key() == Qt.Key.Key_Space
+                    and self.is_python_file
+            ):
+                line, column = self.getCursorPosition()
+                self._manual_completion_generation = self.auto_completer.get_completions(
+                    line + 1,
+                    column,
+                    self.text(),
+                )
+                return
 
-        if (
-                event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and self.SendScintilla(SCI_AUTOCACTIVE)
-        ):
+            if (
+                    event.modifiers() == Qt.KeyboardModifier.ControlModifier
+                    and event.key() == Qt.Key.Key_X
+                    and not self.hasSelectedText()
+            ):
+                line, _column = self.getCursorPosition()
+                self.setSelection(line, 0, line, self.lineLength(line))
+                self.cut()
+                return
+
+            if (
+                    event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                    and self.SendScintilla(SCI_AUTOCACTIVE)
+            ):
+                return super().keyPressEvent(event)
+
+            if (
+                    self.is_python_file
+                    and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                    and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                    and not self.hasSelectedText()
+            ):
+                self._handle_python_return()
+                return
+
+            if event.text() == "(" and self.is_python_file and not self._shutting_down:
+                line, column = self.getCursorPosition()
+                before = self.text(line)[:column]
+                if self._has_callable_before_parenthesis(before):
+                    # Let the base handler insert '(' first. The delayed lookup then
+                    # sees the cursor/source state Jedi expects.
+                    self._signature_timer.start()
+
             return super().keyPressEvent(event)
-
-        if (
-                self.is_python_file
-                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-                and event.modifiers() == Qt.KeyboardModifier.NoModifier
-                and not self.hasSelectedText()
-        ):
-            self._handle_python_return()
-            return
-
-        if event.text() == "(" and self.is_python_file and not self._shutting_down:
-            line, column = self.getCursorPosition()
-            before = self.text(line)[:column]
-            if self._has_callable_before_parenthesis(before):
-                # Let the base handler insert '(' first. The delayed lookup then
-                # sees the cursor/source state Jedi expects.
-                QTimer.singleShot(50, self._trigger_signature_help)
-
-        return super().keyPressEvent(event)
-
+    
+    def _dismiss_signature(self):
+        """Cancel scheduled annd in-flight signature help and hide its tooltip."""
+        self._signature_timer.stop()
+        self.signature_helper.invalidate()
+        QToolTip.hideText()
+        
+    def focusOutEvent(self, event):
+        """Prevent signature results from following focus into another panel."""
+        if self.is_python_file:
+            self._dismiss_signature()
+        super().focusOutEvent(event)
+        
+    
     def _trigger_signature_help(self):
         """Run Jedi signature lookup at the current cursor position."""
         if self._shutting_down or self._loading_text:
@@ -585,20 +576,23 @@ class PythonEditor(QsciScintilla):
         return [getattr(self, name) for name in names if hasattr(self, name)]
 
     def shutdown(self):
-        """Stop producing results and emit when all workers naturally finish."""
+        """Stop producing results annd emit when all workers naturally finish."""
         if self._shutting_down:
             return
         self._shutting_down = True
         self._loading_text = True
         self._autocomplete_timer.stop()
-        for timer_name in ("_hover_timer", "_ruff_hover_timer"):
+        if self.is_python_file:
+            self.documentation_popup.dismiss()
+            self._dismiss_signature()
+        for timer_name in ("_signature_timer", "_ruff_hover_timer"):
             timer = getattr(self, timer_name, None)
             if timer is not None:
                 timer.stop()
-
+        
         if self.ruff_lsp is not None:
             self.ruff_lsp.shutdown()
-
+            
         workers = self._analysis_workers()
         for worker in workers:
             worker.shutdown()
@@ -607,7 +601,7 @@ class PythonEditor(QsciScintilla):
             except TypeError:
                 pass
         self._check_shutdown_complete()
-
+    
     def _check_shutdown_complete(self):
         """Signals exactly when no owned worker is still executing."""
         if self._shutting_down and not any(worker.isRunning() for worker in self._analysis_workers()):
