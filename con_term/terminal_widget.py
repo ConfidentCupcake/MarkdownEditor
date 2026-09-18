@@ -142,6 +142,10 @@ class _PtySession(QThread):
                 # Publish the process only after spawn() succeeds. GUI writes,
                 # resizes, and stop requests can now use it safely.
                 self._process = process
+                # A dock resize may arrive while spawn() is blocking. Apply 
+                # the latest stored dimensions before exposing the prompt.
+                if (self._rows, self._columns) != spawn_options["dimensions"]:
+                    process.setwinsize(self._rows, self._columns)
 
             # stop() may have been requested while spawn() was still running.
             # Event's real query method is is_set(), not it_set().
@@ -153,6 +157,13 @@ class _PtySession(QThread):
 
             while not self._stop_requested.is_set() and process.isalive():
                 try:
+                    if sys.platform != "win32":
+                        # POSIX buffered reads otherwise hold an internal lock idenfinitely while idle.
+                        # Poll the file destributor so this worker can observe stop and close its own render.
+                        import select
+                        ready, _, _ = select.select([process.fd], [], [], 0.1)
+                        if not ready:
+                            continue
                     # A larger buffer reduces signal overhead during commands
                     # that generate substantial terminal output.
                     chunk = process.read(65536)
@@ -271,16 +282,17 @@ class _PtySession(QThread):
         """
         Request worker shutdown and unblock a pending PTY read.
         
-        Setting the event stops future loop iterations. Closing the backend is also necessary 
-        because the worker may currently be blocked inside 'process.read()' and unable to check the event.
+        POSIX reads poll with a timeout, so the worker closes its own buffered reader.
+        Windows keeps its backend-close mechanism to unlock ConPTY.
         """
         self._stop_requested.set()
         
         with self._lock:
             process = self._process
-            
-        if process is not None:
+        
+        if process is not None and sys.platform == "win32":
             self._close_process(process)
+        
         
         
         
@@ -498,7 +510,7 @@ class TerminalWidget(QWidget):
     _SCROLLBACK_LINES = 5000
 
     def __init__(self, parent: QWidget | None = None, working_directory: Path | None = None) -> None:
-        """Build the terminal and start the preferred available shell.
+        """Build the terminal and queue its first shell until the dock is visible.
 
         Args:
             parent: Qt owner, normally MarkdownEditor's MainWindow.
@@ -793,8 +805,11 @@ class TerminalWidget(QWidget):
             self.status_label.setText("● Restarting terminal…")
             self._session.request_stop()
             return
-
-        self._launch_queued_shell()
+        
+        # The shell must not print its first prompt into a unlaid-out-widget.
+        # showEvent/resizeEvent restart this timer until geometry settles.
+        if self.isVisible():
+            self._resize_timer.start()
 
     def _launch_queued_shell(self) -> None:
         """
@@ -805,7 +820,7 @@ class TerminalWidget(QWidget):
         startup failures cannot be missed.
         :return:
         """
-        if self._queued_shell is None or self._stopping:
+        if self._queued_shell is None or self._stopping or self._session is not None or not self.isVisible():
             return
 
         shell_path, arguments = self._queued_shell
@@ -829,6 +844,10 @@ class TerminalWidget(QWidget):
         session.session_started.connect(self._on_session_started)
         session.session_failed.connect(self._on_session_failed)
         session.session_exited.connect(self._on_session_exited)
+        # session_exited is emitted from inside run(); only finished proves that the 
+        # QThread can be deleted and replaced safely.
+        session.finished.connect(self._on_session_finished)
+        self._last_exit_code = -1
 
         self._session = session
         self.status_label.setText("● Starting terminal…")
@@ -961,7 +980,13 @@ class TerminalWidget(QWidget):
         # Ctrl+L is the clear-screen/readline command in supported shells.
         self._write_to_shell("\x0c")
         self.output.setFocus()
-
+    
+    def showEvent(self, event) -> None:
+        """Defer first launch until the visible dock has completed its layout."""
+        super().showEvent(event)
+        # The existing 60 ms timer als coalesces subsequent layout resizes.
+        self._resize_timer.start()
+    
     def resizeEvent(self, event) -> None:
         """Schedule a terminal resize after the dock stops changing size.
 
@@ -993,19 +1018,26 @@ class TerminalWidget(QWidget):
             )
 
     def _apply_terminal_size(self) -> None:
-        """Resize the ANSI screen and PTY when measured geometry changed."""
+        """Launch at visible geometry, or resize the existing terminal."""
+        if not self.isVisible() or self._stopping:
+            return
+        # Resolve pending child geometry before measuring the text viewport.
+        self.layout().activate()
+        if self._session is None and self._queued_shell is not None:
+            self._launch_queued_shell()
+            return
         old_size = (self._rows, self._columns)
         self._measure_terminal_size()
-
+        
         if old_size == (self._rows, self._columns):
             return
-
-        # pyte resize arguments are (lines/rows, columns).
+        
+        # pyte resize arfuments are (lines/rows, columns).
         self._screen.resize(self._rows, self._columns)
-
+        
         if self._session is not None:
             self._session.resize_terminal(self._rows, self._columns)
-
+            
         self._render_screen()
 
     def _on_session_started(self) -> None:
@@ -1027,17 +1059,19 @@ class TerminalWidget(QWidget):
         self._feed_text(f"\r\n[Terminal error: {message}]\r\n")
 
     def _on_session_exited(self, exit_code: int) -> None:
-        """Release the old worker and launch a queued replacement.
-
-        Args:
-            exit_code: Child exit status, or -1 when the backend had no status.
-        """
+        """Record the exit status while the worker finishes unwinding run()."""
+        if self.sender() is self._session:
+            self._last_exit_code = exit_code
+    
+    
+    def _on_session_finished(self) -> None:
+        """Release a finished QThread, then launch any queued replacement."""
         session = self.sender()
-
-        # Ignore a stale queued signal from a worker no longer owned here.
+        
+        # Ignore a stake queud signal from a worker no longer owned here.
         if session is not self._session:
             return
-
+        
         self._session = None
         session.deleteLater()
 
@@ -1045,21 +1079,22 @@ class TerminalWidget(QWidget):
             self._launch_queued_shell()
             return
 
-        if not self._stopping and exit_code != -1:
+        if not self._stopping and self._last_exit_code != -1:
             self._feed_text(
-                f"\r\n[Process exited with code {exit_code}]\r\n"
+                f"\r\n[Process exited with code {self._last_exit_code}]\r\n"
             )
 
         self.status_label.setText("● Terminal stopped")
         self.status_label.setStyleSheet("color:#e06c75; font-size:12px;")
-
+    
     def stop(self) -> None:
-        """Stop the active shell and discard every queued restart."""
-        self._stopping = True
-        self._queued_shell = None
+            """Stop the active shell and discard every queued restart."""
+            self._stopping = True
+            self._queued_shell = None
+            self._resize_timer.stop()
 
-        if self._session is not None:
-            self._session.request_stop()
+            if self._session is not None:
+                self._session.request_stop()
 
     def _shutdown_and_wait(self) -> None:
         """Perform a bounded wait before Qt destroys the PTY worker."""

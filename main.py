@@ -635,12 +635,25 @@ class MainWindow(QMainWindow):
 
         t_dock.hide()
         self.terminal_dock = t_dock
-
+        # Menu shortcuts, Run, and the dock close button must update the icons too;
+        dock.visibilityChanged.connect(lambda visible: self._set_sidebar_icon("console", visible))
+        t_dock.visibilityChanged.connect(lambda visible: self._set_sidebar_icon("terminal", visible))
+    
+    def _set_sidebar_icon(self, name: str, active: bool):
+        """Reflect a tool's actual visibility using the existing icon variants."""
+        label = self.sidebar_labels.get(name)
+        if label is not None:
+            suffix = "-active" if active else ""
+            label.setPixmap(QPixmap(resource_path(f"icons/{name}{suffix}.png")).scaled(QSize(25,25)))
+    
     def get_sidebar_label(self, path, name):
+        """Create a named clickable sidebar icon using the shared dispatcher."""
         label = QLabel(self)
         label.setPixmap(QPixmap(path).scaled(QSize(25, 25)))
         label.setAlignment(Qt.AlignmentFlag.AlignTop)
         label.setFont(self.window_font)
+        label.setToolTip(name.title())
+        label.setCursor(Qt.PointingHandCursor)
         label.mousePressEvent = lambda e: self.show_hide_tab(e, name)
         return label
 
@@ -1822,7 +1835,7 @@ class MainWindow(QMainWindow):
         return frame
 
     def set_up_body(self):
-        # Body
+        """Build the editor layout and sidebar navigation/action icons."""
         body_frame = QFrame()
         body_frame.setFrameShape(QFrame.Shape.NoFrame)
         body_frame.setLineWidth(0)
@@ -1879,6 +1892,12 @@ class MainWindow(QMainWindow):
         terminal_label = self.get_sidebar_label(resource_path("icons/terminal.png"), "terminal")
         self.sidebar_labels["terminal"] = terminal_label
         side_bar_layout.addWidget(terminal_label)
+        
+        # Reuse the existing assets; these are actions, not side-panel pages.
+        for name in ("console", "settings"):
+            label = self.get_sidebar_label(resource_path(f"icons/{name}.png"), name)
+            self.sidebar_labels[name] = label
+            side_bar_layout.addWidget(label)
 
         self.outline_tree = CodeOutlineTree()
         self.outline_tree.symbol_clicked.connect(self._goto_symbol)
@@ -2285,6 +2304,28 @@ class MainWindow(QMainWindow):
         return True
 
     def show_hide_tab(self, e, type_):
+        """Dispatch left-clicks to tool actions or the three sidebar pages."""
+        if e.button() != Qt.LeftButton:
+            return
+        
+        # Return before changing page icons: opening a dock is independen of 
+        # the currently selected Folder/Search/Outline page.
+        if type_ in ("terminal", "console"):
+            dock = self.terminal_dock if type_ == "terminal" else self.console_dock
+            dock.show()
+            dock.raise_()
+            if type_ == "terminal":
+                self.terminal.output.setFocus()
+            return
+        if type_ == "settings":
+            self._set_sidebar_icon("settings", True)
+            try:
+                self.open_settings()
+            finally:
+                self._set_sidebar_icon("settings", False)
+            return
+            
+            
         panels = {
             "folder": self.file_manager_frame,
             "search": self.search_frame,
