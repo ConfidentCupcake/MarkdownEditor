@@ -23,20 +23,27 @@ from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import *
 
 import resources_rc  # noqa: F401 - register resources generated from icons/resources.qrc
+
 from code_inteligence.find_replace import FindReplaceBar
 from code_inteligence.multi_tab_view import MultiTabView
 from code_inteligence.command_regristry import CommandRegistry
 from code_inteligence.command_palette import CommandPaletteDialog
+
+from code_settings.contrast import read_preferences, write_prefrences, apply_preferences
+
 from con_term.console_widget import ConsoleWidget
 from con_term.terminal_widget import TerminalWidget
+
 from cozy.cat_controller import CatController
 from markdown_editor.markdowneditor import MarkdownEditor
 from python_editor.python_runner import PythonRunner
 from python_editor.pythoneditor import PythonEditor
+
 from ruff_implementation.ruff_lsp_client import RuffLspClient
 from side_bar_widgets.code_outline import CodeOutlineTree
 from side_bar_widgets.file_manager import FileManager
 from side_bar_widgets.fuzzy_searcher import SearchItem, SearchWorker
+
 from git_implementation.git_service import GitService
 from git_ui.commit_graph import CommitGraphPanel
 
@@ -1494,6 +1501,7 @@ class MainWindow(QMainWindow):
             "theme": self.settings.value("theme", "theme.json", type=str),
             "line_numbers": self.settings.value("line_numbers", True, type=bool),
             "highlight_line": self.settings.value("highlight_line", True, type=bool),
+            **read_preferences(self.settings),
         }
 
     def _save_settings(self, new_settings: dict):
@@ -1524,6 +1532,7 @@ class MainWindow(QMainWindow):
             self.settings.remove("paper_color")
         else:
             self.settings.setValue("paper_color", new_settings["paper_color"])
+            write_prefrences(self.settings, new_settiings)
         self.settings.sync()
 
     def open_settings(self):
@@ -1795,6 +1804,9 @@ class MainWindow(QMainWindow):
         # the phantom string). SCI_COLOURISE (4003) with (0, -1) forces the
         # NEW lexer to restyle the entire document right now.
         editor.SendScintilla(4003, 0, -1)
+        # Apply explicit overrides after the theme has supplied its defaults.
+        apply_preferences(editor, settings)
+        
 
     def is_binary(self, path):
         """

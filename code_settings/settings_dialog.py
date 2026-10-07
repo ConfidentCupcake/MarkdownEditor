@@ -359,6 +359,26 @@ class SettingsDialog(QDialog):
         paper_row.addWidget(self.paper_reset_btn)
         paper_row.addStretch()
         layout.addRow("Paper color:", paper_row)
+        
+        self.caret_with_spin = QSpinBox()
+        self.caret_with_spin.setRange(1, 5)
+        self.caret_with_spin.setValue(self.settings.get("caret_width", 2))
+        layout.addRow("Caret width:", self.caret_with_spin)
+        self._appearance_colors = {
+            key: self.settings.get(key) for key in ("caret_color", "selection_foreground", "selection_background")
+        }
+        for key, label in (("caret_color", "Caret color:"), 
+                           ("selection_foreground", "Selection text:"),
+                           ("selection_background", "Selection background")):
+            row = QHBoxLayout()
+            button = QPushButton(self._appearance_colors[key] or "Use theme")
+            reset = QPushButton("Reset to theme")
+            button.clicked.connect(lambda _checked=False, k=key, b=button: self._pick_editor_color(k, b))
+            reset.clicked.connect(lambda _checked=False, k=key, b=button: self._reset_editor_color(k, b))
+            row.addWidget(button)
+            row.addWidget(reset)
+            layout.addRow(label, row)
+        
 
         self.line_numbers_cb = QCheckBox("Show Line Numbers")
         self.line_numbers_cb.setChecked(self.settings.get("line_numbers", True))
@@ -415,5 +435,19 @@ class SettingsDialog(QDialog):
             "paper_color": self._paper_override,
             "line_numbers": self.line_numbers_cb.isChecked(),
             "highlight_line": self.highlight_line_cb.isChecked(),
+            "caret_width": self.caret_with_spin.value(),
+            **self._appearance_colors,
         }
         
+    def _pick_editor_color(self, key, button):
+        """Store a valid color override only when the picker is accepted."""
+        color = QColorDialog.getColor(QColor(self._appearance_colors[key] or "#ffffff"), self, "Editor color")
+        if color.isValid():
+            self._appearance_colors[key] = color.name()
+            button.setText(color.name())
+            
+    def _reset_editor_color(self, key, button):
+        """Remove a dialog-level override so Save restores active-theme inheritance."""
+        self._appearance_colors[key] = None
+        button.setText("Use theme")
+    
