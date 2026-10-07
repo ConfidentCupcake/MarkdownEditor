@@ -25,6 +25,8 @@ from PyQt5.QtWidgets import *
 import resources_rc  # noqa: F401 - register resources generated from icons/resources.qrc
 from code_inteligence.find_replace import FindReplaceBar
 from code_inteligence.multi_tab_view import MultiTabView
+from code_inteligence.command_regristry import CommandRegistry
+from code_inteligence.command_palette import CommandPaletteDialog
 from con_term.console_widget import ConsoleWidget
 from con_term.terminal_widget import TerminalWidget
 from cozy.cat_controller import CatController
@@ -38,8 +40,11 @@ from side_bar_widgets.fuzzy_searcher import SearchItem, SearchWorker
 from git_implementation.git_service import GitService
 from git_ui.commit_graph import CommitGraphPanel
 
+
+
 from markdown_python_editor import __version__
 from markdowneditor_assets import asset_path
+
 
 # Runtime display and update comparison use the same value that setuptools
 # writes into wheel metadata. Prefixing "v" is presentation only.
@@ -219,6 +224,7 @@ class MainWindow(QMainWindow):
            pre { background:#1e1f22; padding:1em; border-radius:6px; overflow-x:auto; }
            """
         self.init_ui()
+        self._install_command_palette()
 
         if hasattr(sys, "_MEIPASS"):
             # We're running as a bundled exe
@@ -406,14 +412,14 @@ class MainWindow(QMainWindow):
         """Clear stale repository identity without interrupting editing."""
         self.git_branch_label.setText("No Git repository")
         self.git_branch_label.setToolTip(message)
-        
+
         # Do not call git_branch_label.clear(); that erases the message just set.
         self.git_graph.clear()
 
     def _refresh_git_state(self) -> None:
         """
         Refresh file colors and history for the current project root.
-        
+
         The file-tree status checker and history service are seperate asynchronous
         components. One coordinator prevents manus, timers, and folder changes
         from refreshing only half of the Git UI.
@@ -421,11 +427,11 @@ class MainWindow(QMainWindow):
         file_manager = getattr(self, "file_manager", None)
         if file_manager is None:
             return
-        
+
         file_manager.check_git_status()
         if hasattr(self, "git_service"):
             self._refresh_git_history()
-            
+
     def _refresh_git_history(self) -> None:
         """Request history for the current FileManager root, if one is open."""
         folder = self.file_manager.current_folder
@@ -623,9 +629,9 @@ class MainWindow(QMainWindow):
 
         dock.hide()
         self.console_dock = dock
-        
+
         terminal_directory = (self._workspace_root if hasattr(sys, "_MEIPASS") else self.file_manager.current_folder or self._workspace_root)
-        
+
         # Terminal (new)
         self.terminal = TerminalWidget(parent=self, working_directory=terminal_directory)
         t_dock = QDockWidget("Terminal", self)
@@ -638,14 +644,14 @@ class MainWindow(QMainWindow):
         # Menu shortcuts, Run, and the dock close button must update the icons too;
         dock.visibilityChanged.connect(lambda visible: self._set_sidebar_icon("console", visible))
         t_dock.visibilityChanged.connect(lambda visible: self._set_sidebar_icon("terminal", visible))
-    
+
     def _set_sidebar_icon(self, name: str, active: bool):
         """Reflect a tool's actual visibility using the existing icon variants."""
         label = self.sidebar_labels.get(name)
         if label is not None:
             suffix = "-active" if active else ""
             label.setPixmap(QPixmap(resource_path(f"icons/{name}{suffix}.png")).scaled(QSize(25,25)))
-    
+
     def get_sidebar_label(self, path, name):
         """Create a named clickable sidebar icon using the shared dispatcher."""
         label = QLabel(self)
@@ -992,7 +998,7 @@ class MainWindow(QMainWindow):
         git_refresh_action.setShortcut("Ctrl+Shift+G")
         git_refresh_action.setShortcutContext(Qt.ApplicationShortcut)
         git_refresh_action.triggered.connect(self._refresh_git_state)
-        
+
         toggle_git_history_action = view_menu.addAction("Toggle Git History")
         toggle_git_history_action.setShortcut("Ctrl+Alt+G")
         toggle_git_history_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -1049,6 +1055,59 @@ class MainWindow(QMainWindow):
         check_updates_action = help_menu.addAction("Check for Updates")
         check_updates_action.triggered.connect(lambda: self.check_for_updates(manual=True))
 
+        # Setting Object names for all shortcut actions for the command_palette
+        new_file.setObjectName("menu.new_file")
+        open_file.setObjectName("menu.open_file")
+        open_folder.setObjectName("menu.open_folder")
+        save_file.setObjectName("menu.save_file")
+        save_as.setObjectName("menu.save_as")
+        save_all_action.setObjectName("menu.save_all_action")
+        close_all_action.setObjectName("menu.close_all_action")
+        undo_action.setObjectName("menu.undo_action")
+        redo_action.setObjectName("menu.redo_action")
+        cut_action.setObjectName("menu.cut_action")
+        copy_action.setObjectName("menu.copy_action")
+        paste_action.setObjectName("menu.paste_action")
+        select_all_action.setObjectName("menu.select_all_action")
+        delete_line_action.setObjectName("menu.delete_line_action")
+        find_action.setObjectName("menu.find_action")
+        replace_action.setObjectName("menu.replace_action")
+        goto_action.setObjectName("menu.goto_action")
+        toggle_comment_action.setObjectName("menu.toggle_comment_action")
+        goto_definition_action.setObjectName("menu.goto_definition_action")
+        run_file_action.setObjectName("menu.run_file_action")
+        run_with_args_action.setObjectName("menu.run_with_args_action")
+        run_selection_action.setObjectName("menu.run_selection_action")
+        stop_action.setObjectName("menu.stop_action")
+        interpreter_action.setObjectName("menu.interpreter_action")
+        toggle_sidebar_action.setObjectName("menu.toggle_sidebar_action")
+        toggle_preview_action.setObjectName("menu.toggle_preview_action")
+        toggle_console_action.setObjectName("menu.toggle_console_action")
+        toggle_terminal_action.setObjectName("menu.toggle_terminal_action")
+        split_right_action.setObjectName("menu.split_right_action")
+        unsplit_action.setObjectName("menu.unsplit_action")
+        fullscreen_editor.setObjectName("menu.fullscreen_editor")
+        starting_window_size.setObjectName("menu.starting_window_size")
+        git_refresh_action.setObjectName("menu.git_refresh_action")
+        toggle_git_history_action.setObjectName("menu.toggle_git_history_action")
+        settings_action.setObjectName("menu.settings_action")
+        hacker_action.setObjectName("menu.hacker_action")
+        check_updates_action.setObjectName("menu.check_updates_action")
+
+    def _install_command_palette(self):
+        """Ecpose existing menu actions through one searchable command dialog."""
+        self.command_regristry = CommandRegistry(self)
+        self.command_palette = CommandPaletteDialog(self.command_regristry, self)
+
+        menu = self.menuBar().addMenu("Commands")
+
+        action = menu.addAction("Command Palette")
+        action.setObjectName("workbench.command_palette")
+        action.setShortcut("Ctrl+Alt+Y")
+        action.triggered.connect(self.command_palette.open_palette)
+        # Discovery runs again when opened, so rebuilt Recent Files entries stay valid.
+        self.command_regristry.refresh_menus(self.menuBar())
+
     def split_current_editor_right(self):
         editor = self.current_editor()
 
@@ -1059,11 +1118,11 @@ class MainWindow(QMainWindow):
 
     def unsplit_active_group(self):
         self.tab_view.unsplit_active_group()
-    
+
     def _toggle_git_history(self) -> None:
         """Show or hide Git history dock created during startup."""
         self.git_graph_dock.setVisible(not self.git_graph_dock.isVisible())
-    
+
     def _trigger_goto_definition(self):
         editor = self.current_editor()
         if isinstance(editor, PythonEditor):
@@ -1892,7 +1951,7 @@ class MainWindow(QMainWindow):
         terminal_label = self.get_sidebar_label(resource_path("icons/terminal.png"), "terminal")
         self.sidebar_labels["terminal"] = terminal_label
         side_bar_layout.addWidget(terminal_label)
-        
+
         # Reuse the existing assets; these are actions, not side-panel pages.
         for name in ("console", "settings"):
             label = self.get_sidebar_label(resource_path(f"icons/{name}.png"), name)
@@ -2178,12 +2237,12 @@ class MainWindow(QMainWindow):
 
         self._dirty_editors.discard(editor)
         self.tab_view.remove_editor(editor)
-        
+
         self._dispose_editor(editor)
 
         self.render_preview()
         return True
-    
+
     def _dispose_editor(self, editor):
         """Delete now, or retain a Python editor until its workers finish."""
         if isinstance(editor, PythonEditor):
@@ -2192,18 +2251,18 @@ class MainWindow(QMainWindow):
             editor.shutdown_complete.connect(self._finalize_retired_editor)
             editor.shutdown()
             editor._check_shutdown_complete()
-            return 
+            return
         editor.shutdown()
         editor.setParent(None)
         editor.deleteLater()
-        
+
     def _finalize_retired_editor(self, editor):
         """Release a retired editor only after all QThreads stopped."""
         if editor not in self._retired_editors:
-            return 
+            return
         self._retired_editors.remove(editor)
         editor.deleteLater()
-    
+
     def on_file_rename(self, old_path: Path, new_path: Path, is_directory=False):
         """Relocate every affected tab while preserving one-path ownership."""
         old_path = Path(old_path)
@@ -2307,8 +2366,8 @@ class MainWindow(QMainWindow):
         """Dispatch left-clicks to tool actions or the three sidebar pages."""
         if e.button() != Qt.LeftButton:
             return
-        
-        # Return before changing page icons: opening a dock is independen of 
+
+        # Return before changing page icons: opening a dock is independen of
         # the currently selected Folder/Search/Outline page.
         if type_ in ("terminal", "console"):
             dock = self.terminal_dock if type_ == "terminal" else self.console_dock
@@ -2324,8 +2383,8 @@ class MainWindow(QMainWindow):
             finally:
                 self._set_sidebar_icon("settings", False)
             return
-            
-            
+
+
         panels = {
             "folder": self.file_manager_frame,
             "search": self.search_frame,
@@ -2670,7 +2729,7 @@ class MainWindow(QMainWindow):
         self._add_to_recent_files(str(path))
         self.statusBar().showMessage(f"Saved {path.name}", 2_000)
         return True
-    
+
     def _terminal_view_has_focus(self) -> bool:
         """Return whether global Edit shortcuts belonng to the terminal view."""
         terminal = getattr(self, "terminal", None)
@@ -3118,7 +3177,7 @@ class MainWindow(QMainWindow):
         ruff = getattr(self, "ruff_lsp_client", None)
         terminal = getattr(self, "terminal", None)
         git_service = getattr(self, "git_service", None)
-        
+
 
         return bool(
             # Retired editors remain here until their workers are disposed.
@@ -3192,7 +3251,7 @@ class MainWindow(QMainWindow):
         if hasattr(self.search_worker, "shutdown"):
             self.search_worker.shutdown()
         self.settings.setValue("recent_files", self.recent_files)
-        
+
         self.file_manager.git_checker.shutdown()
         self.git_service.shutdown()
 
@@ -3420,6 +3479,7 @@ class MainWindow(QMainWindow):
             import webbrowser
 
             webbrowser.open(download_url)
+
 
 def main() -> int:
     """Installed GUI entry point."""
