@@ -1,14 +1,15 @@
-import re
-import json
-from PyQt5.QtGui import QFont, QColor
-from PyQt5.Qsci import QsciLexerCustom
-
-import keyword
-import types
 import builtins
+import json
+import keyword
 import os
+import re
 import sys
+import types
 from pathlib import Path
+
+from PyQt5.Qsci import QsciLexerCustom
+from PyQt5.QtGui import QColor, QFont
+
 from markdowneditor_assets import asset_path
 
 try:

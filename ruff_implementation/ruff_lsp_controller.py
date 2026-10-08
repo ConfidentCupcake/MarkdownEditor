@@ -5,9 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from PyQt5.QtCore import QObject, QTimer, pyqtSignal
-from PyQt5.QtWidgets import QToolTip
+from PyQt5.QtCore import QObject, QTimer, pyqtSignal, QPoint
+from PyQt5.QtWidgets import QToolTip, QMessageBox, QMenu
 
+from ruff_implementation.workspace_edit import WorkspaceEditApplier, WorkspaceEditError
 from ruff_implementation.ruff_diagnostics_model import RuffDiagnostic, RuffPosition, RuffSeverity
 from ruff_implementation.ruff_diagnostics_view import RuffDiagnosticView
 
@@ -254,10 +255,76 @@ class RuffLspController(QObject):
         QToolTip.hideText()
         return False
 
-    def context_menu(self, event) -> bool:
-        """Phase-one placeholder; LSP codeAction handling is added later."""
-        # Return False so PythonEditor keeps showing the normal QScintilla menu.
-        return False
+    def context_menu(self, event, view=None) -> bool:
+        """Display current Ruff quick fixes without retaining the temporary Qt event."""
+        view = view or self.editor
+        position = view.SendScintilla(view.SCI_POSITIONFROMPOINT, event.pos().x(), event.pos().y())
+        if position < 0:
+            return False
+        
+        line, _column = self.editor.lineIndexFromPosition(position)
+        diagnostic = self.view.at_line(line)
+        if diagnostic is None:
+            return False
+        point = QPoint(event.globalPos())
+        
+        def recieve(actions, error, uri, revision):
+            """Show returned action titles abd apply only the explicit selected item."""
+            if error:
+                QMessageBox.warning(self.editor, "Quick fixes", str(error))
+                return
+            
+            menu = QMenu(self.editor)
+            pairs = []
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                item = menu.addAction(str(action.get("title", "Quick fix")))
+                item.setEnabled(not bool(action.get("disabled")))
+                pairs.append((item, action))
+            
+            if not pairs:
+                menu.addAction("No quick fix available").setEnabled(False)
+            chosen = menu.exec_(point)
+            
+            for item, action in pairs:
+                if chosen is item:
+                    try:
+                        self.apply_code_action(action, uri, revision)
+                    except WorkspaceEditError as error:
+                        QMessageBox.warning(self.editor, "Quick fixes", str(error))
+                    break
+        
+        self.request_quick_fixes(diagnostic=diagnostic, callback=recieve)
+        return True
+        
+        
+    def request_quick_fixes(self, diagnostic, callback):
+        """Request action with raw provider data and capture the ecaxt document identity."""
+        uri, revision, client = self.uri, self.document_version, self.client
+        if self._closed or diagnostic.revision != revision or not client.is_ready:
+            callback([], {"message": "Diagnostic is stale"}, uri, revision)
+            return
+        
+        self.change_timer.stop()
+        self._send_change()
+        
+        def receive(result, error):
+            """Discard repolies after closure, relocation, editing or server replacement."""
+            if self._closed or client is not self.client or self.uri != uri or self.document_version != revision:
+                return
+            callback(result if isinstance(result, list) else [], error, uri, revision)
+        client.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri}, "range": diagnostic.raw["range"],
+            "context": {"diagnostics": [diagnostic.raw], "only": ["quickfix"], "triggerKind": 1}}, receive)
+            
+            
+    def apply_code_action(self, action, uri, revision):
+        """Apply a direct edit completely or report an unsupported action form."""
+        if action.get("disabled") or action.get("command") or not isinstance(action.get("edit"), dict):
+            raise WorkspaceEditError("This action needs an unsupported command or resolve step")
+        WorkspaceEditApplier(self).apply(action["edit"], uri, revision)
+        
     
     def _clear_problem_rows(self):
         """Remove this URI's Problems rowss when its text or lifecycle changes."""

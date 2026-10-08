@@ -2453,7 +2453,7 @@ class MainWindow(QMainWindow):
         self._connect_editor(editor)
         self.tab_view.add_editor(editor, "Untitled", target_group)
 
-        self.current_file = Non
+        self.current_file = None
         self.statusBar().showMessage("Created new file", 3000)
         return editor
 
@@ -3380,6 +3380,8 @@ class MainWindow(QMainWindow):
         3.  Reopen each file with set_new_tab(), flipping self.python_editor_active
             per file so each tab gets the right editor class.
         4.  Re-focus the tab that was active at close time.
+
+
 
         set_new_tab() already handles the hard parts for us: binary-file rejection,
         duplicate detection (find_editor_by_path), recent-file bookkeeping and dirty-state signal wiring.

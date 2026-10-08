@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-from PyQt5.QtCore import QDir, QModelIndex, QPoint, Qt, QItemSelectionModel
+from PyQt5.QtCore import QDir, QItemSelectionModel, QModelIndex, QPoint, Qt
 from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QIcon
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -16,7 +16,10 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QTreeView,
 )
+
 from markdowneditor_assets import asset_path
+
+
 class FileManager(QTreeView):
     def __init__(self, set_new_tab, main_window, parent=None):
         super(FileManager, self).__init__(None)

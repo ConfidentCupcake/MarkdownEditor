@@ -3,6 +3,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
+
 class GitStatusChecker(QThread):
     """
     Background thread running 'git status --porcelain'.

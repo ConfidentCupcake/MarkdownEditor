@@ -6,7 +6,6 @@ from pathlib import Path
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtWidgets import QListWidgetItem
 
-
 MAX_RESULTS = 5_000
 EXCLUDED_DIRS = {
     ".git", ".svn", ".hg", ".bzr", ".idea", ".vscode",
