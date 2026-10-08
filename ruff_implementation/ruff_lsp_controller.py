@@ -70,6 +70,7 @@ class RuffLspController(QObject):
 
     def relocate(self, path):
         """Migrate this open buffer to a new URI after Save As or rename."""
+        self._clear_problem_rows()
         old_uri = self._uri
         if self._opened and self.client.is_ready:
             self.client.close_document(old_uri)
@@ -130,6 +131,7 @@ class RuffLspController(QObject):
     
     def _on_text_changed(self):
         """Advance document version and schedule one debounced didChange."""
+        self._clear_problem_rows()
         if self._closed:
             return
         
@@ -256,9 +258,16 @@ class RuffLspController(QObject):
         """Phase-one placeholder; LSP codeAction handling is added later."""
         # Return False so PythonEditor keeps showing the normal QScintilla menu.
         return False
+    
+    def _clear_problem_rows(self):
+        """Remove this URI's Problems rowss when its text or lifecycle changes."""
+        manager = getattr(self.editor.window(), "diagnostics_manager", None)
+        if manager is not None:
+            manager.clear_document(self.uri)
 
     def shutdown(self):
         """Stop synchronization, tell Ruff the tab is closed, clear visuals."""
+        self._clear_problem_rows()
         if self._closed:
             return
         self._closed = True
