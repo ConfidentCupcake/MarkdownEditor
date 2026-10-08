@@ -9,7 +9,6 @@ from zipfile import ZipFile
 
 from markdown_python_editor import __version__
 
-
 REQUIRED_ASSETS = {
     "markdowneditor_assets/css/style.qss",
     "markdowneditor_assets/icons/app-icon.png",

@@ -3,6 +3,7 @@ from PyQt5.QtWidgets import QTreeWidget, QTreeWidgetItem
 
 from ruff_implementation.diagnostic_model import Diagnostic, DiagnosticSeverity
 
+
 class ProblemsPanel(QTreeWidget):
     """Provider-neutral, navigable diagnostic list."""
     

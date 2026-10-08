@@ -259,6 +259,14 @@ class PythonEditor(QsciScintilla):
         A keyboard menu request also keeps the normal context menu behavior.
         """
         from PyQt5.QtGui import QContextMenuEvent
+        # A mirrored view routes fixes through the sole document synchronizer;
+        controller = self.ruff_lsp
+        store = getattr(self.window(), "documents", None)
+        if controller is None and store is not None and self in store.documents:
+            controller = getattr(store.document(self).analysis_owner, "ruff_lsp", None)
+        if (controller is not None and event.reason() == QContextMenuEvent.Mouse and controller.context_menu(event, self)):
+            event.accept()
+            return
         
         if (self.is_python_file and not self._shutting_down and event.reason() == QContextMenuEvent.Mouse):
             target = self._documentation_target(event.pos())
@@ -274,9 +282,6 @@ class PythonEditor(QsciScintilla):
                 event.accept()
                 return
         
-        if self.is_python_file and self.ruff_lsp is not None and self.ruff_lsp.context_menu(event):
-            event.accept()
-            return
         super().contextMenuEvent(event)
         
 
