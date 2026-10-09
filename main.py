@@ -46,8 +46,9 @@ from ruff_implementation.diagnostic_model import (
     SourceRange,
 )
 from ruff_implementation.diagnostics_manager import DiagnosticsManager
-from ruff_implementation.ruff_diagnostics_model import RuffSeverity
+from ruff_implementation.ruff_diagnostics_model import RuffDiagnostic, RuffPosition, RuffSeverity
 from ruff_implementation.ruff_lsp_client import RuffLspClient
+from ruff_implementation.type_diagnostic import TypeDiagnostics
 from side_bar_widgets.code_outline import CodeOutlineTree
 from side_bar_widgets.file_manager import FileManager
 from side_bar_widgets.fuzzy_searcher import SearchItem, SearchWorker
@@ -262,6 +263,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self._install_command_palette()
         self._install_problems()
+        self._install_type_diagnostics()
 
         if hasattr(sys, "_MEIPASS"):
             # We're running as a bundled exe
@@ -738,6 +740,10 @@ class MainWindow(QMainWindow):
             editor.goto_definition_requested.connect(self._open_file_at_position)
             if editor.ruff_lsp is not None:
                 editor.ruff_lsp.diagnostics_changed.connect(self._on_ruff_diagnostics)
+            #if hasattr(self, "type_diagnostics"):
+            #   self.type_diagnostics.attach(editor.ruff_lsp)
+        if hasattr(self, "diagnostics_manager"):
+            self._bind_diagnostic_editor(editor)
 
     def _cat_unbox(self):
         """
@@ -799,6 +805,9 @@ class MainWindow(QMainWindow):
         for editor in self.tab_view.all_editors():
             if isinstance(editor, PythonEditor) and editor.ruff_lsp is not None:
                 editor.ruff_lsp.set_client(client)
+        # Type imports must follow the same interpreter/workspace change.
+        if hasattr(self, "type_diagnostics"):
+            self.type_diagnostics.reconfigure(executable, root)
         old_client.shutdown()
         client.start()
 
@@ -1122,6 +1131,23 @@ class MainWindow(QMainWindow):
 
         # Discovery runs again when opened, so rebuilt Recent Files entries stay valid.
         self.command_regristry.refresh_menus(self.menuBar())
+
+    def _install_type_diagnostics(self) -> None:
+
+        self.type_diagnostics = TypeDiagnostics(
+            self.diagnostics_manager,
+            self.python_runner.interpreter,
+            self._workspace_root,
+            self,
+        )
+        self.type_diagnostics.error.connect(self._on_analysis_error)
+        self.diagnostics_menu.addAction(
+            "Restart type analysis", self.type_diagnostics.restart
+        )
+        for editor in self.tab_view.all_editors():
+            if isinstance(editor, PythonEditor) and editor.ruff_lsp is not None:
+                self.type_diagnostics.attach(editor.ruff_lsp)
+        self.type_diagnostics.start()
 
     def split_current_editor_right(self):
         editor = self.current_editor()
@@ -3183,6 +3209,7 @@ class MainWindow(QMainWindow):
         ruff = getattr(self, "ruff_lsp_client", None)
         terminal = getattr(self, "terminal", None)
         git_service = getattr(self, "git_service", None)
+        type_analysis = getattr(self, "type_diagnostics", None)
 
         return bool(
             # Retired editors remain here until their workers are disposed.
@@ -3198,6 +3225,7 @@ class MainWindow(QMainWindow):
             # The PTY terminal no longer owns a QProcess. Ask its public API
             # whether the _PtySession worker is still running.
             or (terminal is not None and terminal.is_running())
+            or (type_analysis is not None and type_analysis.is_running())
         )
 
     def _finish_pending_close(self):
@@ -3240,6 +3268,8 @@ class MainWindow(QMainWindow):
             self.tab_view.remove_editor(editor)
             self._dispose_editor(editor)
         self.terminal.stop()
+        if hasattr(self, "type_diagnostics"):
+            self.type_diagnostics.shutdown()
         if hasattr(self.python_runner, "shutdown"):
             self.python_runner.shutdown()
         else:
@@ -3260,8 +3290,14 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _install_problems(self):
-        """Create the provider-neutral diagnostic store and its Problems dock."""
-        self.diagnostics_manager = DiagnosticsManager(self)
+        """
+        Create the common store, Problems dock and merge diagnostic renderer.
+        
+        This foundation works with Ruff alone, Later topics attach additional 
+        providers to the same store and appen their actions to the same menu.
+        Bind-pre existing editors because init_ui runs before this installer.
+        """
+        self.diagnostics_manager: DiagnosticsManager = DiagnosticsManager(self)
         self.problems_panel = ProblemsPanel(self)
         self.problems_dock = QDockWidget("Problems", self)
         self.problems_dock.setObjectName("ProblemsDock")
@@ -3269,9 +3305,70 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, self.problems_dock)
         self.problems_dock.hide()
         self.diagnostics_manager.changed.connect(self.problems_panel.set_diagnostics)
+        self.diagnostics_manager.changed.connect(self._render_all_diagnostics)
         self.problems_panel.diagnosticActivated.connect(self._open_problem)
-        menu = self.menuBar().addMenu("Diagnostics")
-        menu.addAction(self.problems_dock.toggleViewAction())
+        self.diagnostics_menu = self.menuBar().addMenu("Diagnostics")
+        self.diagnostics_menu.addAction(self.problems_dock.toggleViewAction())
+        for editor in self.tab_view.all_editors():
+            self._bind_diagnostic_editor(editor)
+        
+    def _bind_diagnostic_editor(self, editor) -> None:
+        """
+        Give a Python controller its typed store after window initialization.
+        
+        Editors can be created before _install_problems. That installer binds existing
+        tabs, while _connect_editor binds tabs created afterward.
+        """
+        if not isinstance(editor, PythonEditor) or editor.ruff_lsp is None:
+            return
+        editor.ruff_lsp.bind_manager(self.diagnostics_manager)
+        # Resend text once now that findings can reach the shared store.
+        editor.ruff_lsp.sync_from_editor()
+        
+    def _render_all_diagnostics(self, rows: list[Diagnostic]) -> None:
+        """
+        Render each open buffer from all provider's current-version records.
+        
+        Args:
+            rows: Complete snapshot emitted by DiagnosticsManager.changed.
+            
+        Providers replace only their own collection. This method merges their
+        records per URI and filters stale versions before the view clears and 
+        repaints its indicators. Raw Ruff payloads remain stored in the manager.
+        """
+        by_uri = {}
+        for row in rows:
+            by_uri.setdefault(row.uri, []).append(row)
+        for editor in self.tab_view.all_editors():
+            controller = getattr(editor, "ruff_lsp", None)
+            if controller is None or controller._closed:
+                continue
+            display = []
+            for row in by_uri.get(controller.uri, []):
+                if row.revision != controller.document_version:
+                    continue
+                start = row.source_range.start
+                end = row.source_range.end
+                display.append(RuffDiagnostic(
+                    code=f"{row.provider}: {row.code}",
+                    message=row.message,
+                    severity=RuffSeverity(int(row.severity)),
+                    start=RuffPosition(start.line, start.column),
+                    end=RuffPosition(end.line, end.column),
+                    revision=controller.document_version,
+                ))
+            controller.view.render(display)
+    
+    def _on_analysis_error(self, message: str) -> None:
+        """
+        Expose an analysis failure separately from errors in the user's code.
+        
+        A missing server package or directory is not a clean diagnostic result.
+        Show a temporary status message and retain the detail in process output.
+        """
+        print(message)
+        self.statusBar().showMessage(message, 15_000)
+
 
     def _publish_problems(self, editor, rows):
         """Convert Ruff records into generic diagnostics without losing their raw payload."""
@@ -3305,17 +3402,27 @@ class MainWindow(QMainWindow):
         self.diagnostics_manager.replace("ruff", controller.uri, values)
 
     def _open_problem(self, diagnostic):
-        """Navigate to a live URI owner, including an unsaved Python document."""
-        point = diagnostic.source_range.start
+        """
+        Navigate a current finding using the same byte conversion as drawing.
+        
+        Ignore a row that no longer matches the editor's source revision. Open
+        buffers are providers scope, so no disk fallback can navigate to a
+        stale saved copy after an unsaved document has changed or closed.
+        """
         for editor in self.tab_view.all_editors():
             controller = getattr(editor, "ruff_lsp", None)
-            if controller is not None and controller.uri == diagnostic.uri:
-                self.tab_view.focus_editor(editor)
-                editor.setCursorPosition(point.line, point.column)
+            if controller is None or controller.uri != diagnostic.uri:
+                continue
+            if diagnostic.revision != controller.document_version:
                 return
+            
+            point = diagnostic.source_range.start
+            self.tab_view.focus_editor(editor)
+            offset = controller.view._byte_position(point.line, point.column)
+            editor.SendScintilla(QsciScintilla.SCI_GOTOPOS, offset)
+            editor.ensureCursorVisible()
+            return
 
-        if diagnostic.path is not None:
-            self._open_file_at_position(str(diagnostic.path), point.line, point.column)
 
     def save_session(self):
         """

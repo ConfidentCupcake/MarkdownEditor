@@ -19,6 +19,7 @@ dependencies = [
     "ptyprocess>=0.7,<1; sys_platform != 'win32'",
     "pyte>=0.8.2,<1",
     "pywinpty>=3.0,<4; sys_platform == 'win32'",
+    "basedpyright>=1.39.9,<2",
 ]
 
 [project.optional-dependencies]
@@ -100,3 +101,15 @@ quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
 docstring-code-format = true
+
+[tool.basedpyright]
+# Broad checks, including warnings when types are too weak for reliable analysis.
+typeCheckingMode = "recommended"
+
+# These findings represent the unresolved/unsafe code cases requested here.
+reportUndefinedVariable = "error"
+reportAttributeAccessIssue = "error"
+reportOptionalMemberAccess = "error"
+
+# Generate code and environments are not editor application source.
+exclude = ["resources_rc.py", "build", "dist", ".venv", "venv", "__pycache__"]

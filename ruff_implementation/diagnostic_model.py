@@ -33,5 +33,5 @@ class Diagnostic:
     severity: DiagnosticSeverity
     code: str
     message: str
-    recision: int | None = None
+    revision: int | None = None
     provider_data: Any = field(default=None, compare=False, repr=False)

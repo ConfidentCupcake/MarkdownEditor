@@ -17,7 +17,13 @@ class ProblemsPanel(QTreeWidget):
         self.itemActivated.connect(self._activate)
         
     def set_diagnostics(self, diagnostics: list[Diagnostic]) -> None:
-        """Replace displayed rows with a complete provider-neutral snapshot."""
+        """
+        Replace displayed rows with a complete, provider-labelledsnapshot.
+        
+        Line and column labels are one-based for users, while the stored record
+        retains zero-based positions for navigation. Preserve the actual record
+        in Qt.UserRole rather than trying to parse labels when a row is opened.
+        """
         self.clear()
         labels = {
             DiagnosticSeverity.ERROR: "Error",
@@ -31,7 +37,8 @@ class ProblemsPanel(QTreeWidget):
                 labels[diagnostic.severity],
                 diagnostic.path.name if diagnostic.path else diagnostic.uri,
                 str(start.line + 1), str(start.column + 1),
-                diagnostic.code, diagnostic.message,
+                f"{diagnostic.provider}: {diagnostic.code}", 
+                diagnostic.message,
             ))
             row.setData(0, Qt.UserRole, diagnostic)
             self.addTopLevelItem(row)
