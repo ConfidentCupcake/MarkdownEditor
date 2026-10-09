@@ -242,13 +242,26 @@ class PythonEditor(QsciScintilla):
         if self.is_python_file and self.ruff_lsp is not None:
             # True means the current mouse location lies on a Ruff diagnostic line.
             self._ruff_hover_active = self.ruff_lsp.hover(pos)
-            
+
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:
-        """Update diagnostic hover without requesting or hiding documentation."""
-        if not self.is_python_file or self._shutting_down:
+        """Schedule diagnostic hover while a Python editor is active.
+
+        Remember the latest pointer position and restart the single-shot
+        timer. After 150 milliseconds without movement, _trigger_ruff_hover
+        displays diagnostics for that position.
+
+        Non-Python editors and editors shutting down must not schedule
+        hover work. The base handler still receives every movement event
+        so text selection and normal QScintilla interaction keep working.
+        """
+        if self.is_python_file and not self._shutting_down:
             self._last_mouse_pos = e.pos()
+
+            # Restarting the timer postpones the tooltip until movement stops.
             self._ruff_hover_timer.start()
+
+        # Preserve QScintilla's normal mouse handling.
         super().mouseMoveEvent(e)
 
     def contextMenuEvent(self, event):

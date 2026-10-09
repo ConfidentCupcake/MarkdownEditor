@@ -273,7 +273,7 @@ class RuffLspController(QObject):
 
     def _close_quick_fix_menu(self):
 
-        self._quick_fix_generation =+ 1
+        self._quick_fix_generation += 1
         menu = self._quick_fix_menu
         self._quick_fix_menu = None
         if menu is not None and not sip.isdeleted(menu):
