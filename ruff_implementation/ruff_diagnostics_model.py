@@ -47,4 +47,5 @@ class RuffDiagnostic:
     revision: int
     fix: RuffFix | None = None
     raw: dict[str, Any] = field(default_factory=dict, compare=False)
+    provider: str = "ruff"
     

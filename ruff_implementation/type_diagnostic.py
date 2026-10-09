@@ -89,9 +89,9 @@ class TypeDiagnostics(QObject):
         Initial analysis is explicitly queued because its first buffer load may 
         have happened before this service or its signals connections existed.
         """
-        if controller.type_diagnostics_attached:
+        if controller._type_diagnostics_attached:
             return
-        controller.type_diagnostics_attached = True
+        controller._type_diagnostics_attached = True
         controller.document_changed.connect(self.update)
         controller.document_closed.connect(self.close_document)
         self.update(controller.snapshot())
@@ -160,7 +160,7 @@ class TypeDiagnostics(QObject):
         UTF-16 is requested deliberately and converted at the boundary. Config
         requests are supported; dynamic regristration and editing are not.
         """
-        self._request("inizialize", {
+        self._request("initialize", {
             "processId": None,
             "rootUri": self.root.as_uri(),
             "workspaceFolders": [{"uri": self.root.as_uri(), "name": self.root.name}],
@@ -168,7 +168,7 @@ class TypeDiagnostics(QObject):
                 "general": {"positionEncodings": ["utf-16"]},
                 "workspace": {"configuration": True, "workspaceFolders": True},
                 "textDocument": {
-                    "synchronization": {"dynamicRegristration": False, "didSave": False},
+                    "synchronization": {"dynamicRegistration": False, "didSave": False},
                     "publishDiagnostics": {"versionSupport": True, "relatedInformation": True},
                 },
             },
@@ -196,7 +196,7 @@ class TypeDiagnostics(QObject):
         self._deadline.stop()
         self._notify("initialized", {})
         self._ready = True
-        self._notify("workspace/didChangeConfiguration", {"settings": self.settings()})
+        self._notify("workspace/didChangeConfiguration", {"settings": self._settings()})
         self._flush()
 
     def _request(self, method: str, params, callback) -> None:
@@ -486,7 +486,7 @@ class TypeDiagnostics(QObject):
 
     def _initialization_timeout(self) -> None:
 
-        self.error.emot("basedpyright initialization timed out; check the selected interpreter.")
+        self.error.emit("basedpyright initialization timed out; check the selected interpreter.")
         self.process.kill()
 
 

@@ -740,10 +740,11 @@ class MainWindow(QMainWindow):
             editor.goto_definition_requested.connect(self._open_file_at_position)
             if editor.ruff_lsp is not None:
                 editor.ruff_lsp.diagnostics_changed.connect(self._on_ruff_diagnostics)
-            #if hasattr(self, "type_diagnostics"):
-            #   self.type_diagnostics.attach(editor.ruff_lsp)
         if hasattr(self, "diagnostics_manager"):
             self._bind_diagnostic_editor(editor)
+        if (isinstance(editor, PythonEditor) and editor.ruff_lsp is not None
+                and hasattr(self, "type_diagnostics")):
+            self.type_diagnostics.attach(editor.ruff_lsp)
 
     def _cat_unbox(self):
         """
@@ -3347,8 +3348,9 @@ class MainWindow(QMainWindow):
             for row in by_uri.get(controller.uri, []):
                 if row.revision != controller.document_version:
                     continue
-                start = row.source_range.start
-                end = row.source_range.end
+                original = row.provider_data
+                ruff_record = original if row.provider == "ruff" and isinstance(original, RuffDiagnostic) else None
+                start, end = row.source_range.start, row.source_range.end
                 display.append(RuffDiagnostic(
                     code=f"{row.provider}: {row.code}",
                     message=row.message,
@@ -3356,6 +3358,10 @@ class MainWindow(QMainWindow):
                     start=RuffPosition(start.line, start.column),
                     end=RuffPosition(end.line, end.column),
                     revision=controller.document_version,
+                    # Keep Ruff's raw range/data for request_quick_fixes.
+                    raw=ruff_record.raw if ruff_record is not None else {},
+                    fix=ruff_record.fix if ruff_record is not None else None,
+                    provider=row.provider,
                 ))
             controller.view.render(display)
     

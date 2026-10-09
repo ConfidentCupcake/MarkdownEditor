@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from itertools import count
+from functools import partial
 from pathlib import Path
 from uuid import uuid4
 from typing import TYPE_CHECKING
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
-from PyQt5.QtWidgets import QToolTip
+from PyQt5.QtWidgets import QToolTip, QMessageBox
+from PyQt5 import sip
 
 
 from ruff_implementation.workspace_edit import WorkspaceEditApplier, WorkspaceEditError
@@ -54,6 +56,9 @@ class RuffLspController(QObject):
         self._type_diagnostics_attached = False
         self._spelling_attached = False
         self._warned_versionless = False
+
+        self._quick_fix_menu = None
+        self._quick_fix_generation = 0
         
         # Full-buffer updates are delayed slightly while a user is typing.
         # This prevents sending one didChange messafe for every individual keypress.
@@ -94,6 +99,7 @@ class RuffLspController(QObject):
         return Path(path).resolve().as_uri()
 
     def _on_server_stopped(self):
+        self._close_quick_fix_menu()
         self._opened = False
         manager = self.diagnostics_manager
         if manager is not None:
@@ -115,6 +121,7 @@ class RuffLspController(QObject):
 
     def set_client(self, client):
         """Reconnect this document when the selected Ruff interpreter changes."""
+        self._close_quick_fix_menu()
         self.client.server_ready.disconnect(self.open_document)
         self.client.server_stopped.disconnect(self._on_server_stopped)
         self.client.diagnostics_published.disconnect(self._on_diagnostics_published)
@@ -264,35 +271,185 @@ class RuffLspController(QObject):
         QToolTip.showText(self.editor.mapToGlobal(position), text, self.editor)
         return True
 
+    def _close_quick_fix_menu(self):
+
+        self._quick_fix_generation =+ 1
+        menu = self._quick_fix_menu
+        self._quick_fix_menu = None
+        if menu is not None and not sip.isdeleted(menu):
+            menu.close()
+            menu.deleteLater()
+
+    def _forget_quick_fix_menu(self, menu) -> None:
+        """Release a dismissed popup without invalidating its selected action.
+
+        Qt can hide a menu before emitting QAction.triggered. Do not advance the
+        generation here: the selected action still needs its final document and
+        server checks. Late request replies are rejected by the menu-identity check.
+        """
+        if self._quick_fix_menu is menu:
+            self._quick_fix_menu = None
+        if not sip.isdeleted(menu):
+            menu.deleteLater()
+
     def context_menu(self, event, view=None) -> bool:
-        """Display current Ruff quick fixes without retaining the temporary Qt event."""
-        return False
-        
-        
-    def request_quick_fixes(self, diagnostic, callback):
-        """Request action with raw provider data and capture the ecaxt document identity."""
+        """Show native editing commands plus Ruff quick fixes for the clicked line.
+
+        Args:
+            event: Temporary QContextMenuEvent; used synchronously, never captured.
+            view: View receiving the click, or the controller's own editor.
+
+        Returns:
+            True when this method displays the menu. False lets PythonEditor's
+            existing documentation/default-menu behavior handle the click.
+
+        Only current Ruff records can request Ruff actions. Type and spelling
+        diagnostics may share the same line but are never sent to Ruff as input.
+        """
+        target = self.editor if view is None else view
+        if self._closed or not self.client.is_ready or not self._opened:
+            return False
+        byte_position = target.SendScintilla(2022, event.pos().x(), event.pos().y())
+        if byte_position < 0:
+            return False
+        line = target.SendScintilla(target.SCI_LINEFROMPOSITION, byte_position)
+        diagnostics = [item for item in self.view.by_line.get(line, [])
+                       if item.provider == "ruff"
+                       and item.revision == self.document_version
+                       and isinstance(item.raw.get("range"), dict)]
+        if not diagnostics:
+            return False
+
+        self._close_quick_fix_menu()
+        generation = self._quick_fix_generation
+        client = self.client
+        # Copy the position before returning; the Qt event will not stay alive.
+        global_position = event.globalPos()
+        menu = target.createStandardContextMenu()
+        self._quick_fix_menu = menu
+        menu.aboutToHide.connect(partial(self._forget_quick_fix_menu, menu))
+        menu.addSeparator()
+        fixes = menu.addMenu("Ruff quick fixes")
+        groups = []
+        for diagnostic in diagnostics:
+            group = fixes.addMenu(f"{diagnostic.code}: {diagnostic.message[:80]}")
+            group.addAction("Loading fixes…").setEnabled(False)
+            groups.append((diagnostic, group))
+        menu.popup(global_position)
+        for diagnostic, group in groups:
+            self.request_quick_fixes(
+                diagnostic,
+                partial(self._populate_quick_fixes, menu, group, generation, client),
+            )
+        return True
+
+
+    def request_quick_fixes(self, diagnostic, callback) -> None:
+        """Request Ruff code actions using the unchanged provider diagnostic.
+
+        Args:
+            diagnostic: Current RuffDiagnostic with provider='ruff' and raw LSP data.
+            callback: Receives (actions, error, uri, revision). Stale asynchronous
+                replies are discarded rather than attached to newer source text.
+
+        Flush the pending buffer before requesting actions so Ruff's ranges refer
+        to the same revision. The raw diagnostic contains Ruff-specific fix data;
+        rebuilding it from only a displayed message would lose that information.
+        """
         uri, revision, client = self.uri, self.document_version, self.client
-        if self._closed or diagnostic.revision != revision or not client.is_ready:
-            callback([], {"message": "Diagnostic is stale"}, uri, revision)
+        if (self._closed or not self._opened or not client.is_ready
+                or diagnostic.provider != "ruff" or diagnostic.revision != revision
+                or not isinstance(diagnostic.raw, dict)
+                or not isinstance(diagnostic.raw.get("range"), dict)):
+            callback([], {"message": "Ruff diagnostic is stale or has no action data"}, uri, revision)
             return
-        
         self.change_timer.stop()
         self._send_change()
-        
+
         def receive(result, error):
-            """Discard repolies after closure, relocation, editing or server replacement."""
-            if self._closed or client is not self.client or self.uri != uri or self.document_version != revision:
+            """Forward only replies still owned by this document and server.
+
+            Closing, editing, renaming or replacing the client invalidates this
+            request. The popup separately checks its generation and visibility.
+            """
+            if (self._closed or client is not self.client or not client.is_ready
+                    or not self._opened or self.uri != uri
+                    or self.document_version != revision):
                 return
             callback(result if isinstance(result, list) else [], error, uri, revision)
+
         client.request("textDocument/codeAction", {
-            "textDocument": {"uri": uri}, "range": diagnostic.raw["range"],
-            "context": {"diagnostics": [diagnostic.raw], "only": ["quickfix"], "triggerKind": 1}}, receive)
-            
-            
+            "textDocument": {"uri": uri},
+            "range": diagnostic.raw["range"],
+            "context": {"diagnostics": [diagnostic.raw], "only": ["quickfix"], "triggerKind": 1},
+        }, receive)
+
+    def _populate_quick_fixes(self, menu, group, generation, client,
+                              actions, error, uri, revision) -> None:
+        """Replace one loading submenu with validated, explicit user choices.
+
+        This callback runs later on the GUI thread. Check menu identity before
+        touching any Qt submenu that could already have been deleted. Unsupported
+        command/resolve forms are displayed disabled instead of partly executed.
+        """
+        if (self._closed or self._quick_fix_menu is not menu
+                or sip.isdeleted(menu) or sip.isdeleted(group)
+                or generation != self._quick_fix_generation
+                or client is not self.client or not client.is_ready
+                or self.uri != uri or self.document_version != revision):
+            return
+        group.clear()
+        if error:
+            message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+            group.addAction("Ruff request failed: " + message).setEnabled(False)
+            return
+        if not actions:
+            group.addAction("No Ruff quick fix available").setEnabled(False)
+            return
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            title = str(action.get("title", "Ruff action"))
+            reason = None
+            disabled = action.get("disabled")
+            if disabled is not None:
+                reason = disabled.get("reason", "Disabled by Ruff") if isinstance(disabled, dict) else str(disabled)
+            elif action.get("command") is not None or not isinstance(action.get("edit"), dict):
+                reason = "Requires a command or resolve step not supported by this editor"
+            entry = group.addAction(title if reason is None else f"{title} — {reason}")
+            if reason is not None:
+                entry.setEnabled(False)
+            else:
+                # partial binds this loop's action; a late-binding lambda would
+                # make every menu item apply the final action in the list.
+                entry.triggered.connect(partial(
+                    self._activate_quick_fix, action, uri, revision, client, generation
+                ))
+    def _activate_quick_fix(self, action, uri, revision, client, generation, checked=False) -> None:
+        """Apply the selected action only if its document/server snapshot is current.
+
+        The checked argument is supplied by QAction.triggered and is unused.
+        Recheck after menu dismissal because hide may occur before triggered.
+        Validation failures are shown to the user; they never escape a Qt slot.
+        """
+        if (self._closed or generation != self._quick_fix_generation
+                or client is not self.client or not client.is_ready
+                or self.uri != uri or self.document_version != revision):
+            return
+        try:
+            self.apply_code_action(action, uri, revision)
+        except WorkspaceEditError as error:
+            QMessageBox.warning(self.editor, "Ruff quick fix", str(error))
+
     def apply_code_action(self, action, uri, revision):
         """Apply a direct edit completely or report an unsupported action form."""
-        if action.get("disabled") or action.get("command") or not isinstance(action.get("edit"), dict):
-            raise WorkspaceEditError("This action needs an unsupported command or resolve step")
+        if (self._closed or not self.client.is_ready
+                or self.uri != uri or self.document_version != revision):
+            raise WorkspaceEditError("Document or Ruff connection changed after the request")
+        if (not isinstance(action, dict) or action.get("disabled") is not None
+                or action.get("command") is not None
+                or not isinstance(action.get("edit"), dict)):
+            raise WorkspaceEditError("This action is disabled or requires a command/resolve step")
         WorkspaceEditApplier(self).apply(action["edit"], uri, revision)
 
 
@@ -302,6 +459,7 @@ class RuffLspController(QObject):
         The local variable has type DiagnosticsManager | None. The guard narrows
         it to DiagnosticsManager, so clear_document is a known, valid method.
         """
+        self._close_quick_fix_menu()
         manager = self.diagnostics_manager
         if manager is not None:
             manager.clear_document(self.uri)
